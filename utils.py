@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 import os
 
 class KakaoDataset(Dataset):
@@ -21,10 +21,10 @@ class KakaoDataset(Dataset):
         pid = data['pid']
         text = data['uni']
         freq = data['w_uni']
-        bcate = data['bcateid']
-        mcate = data['mcateid']
-        scate = data['scateid']
-        dcate = data['dcateid']
+        bcate = data['bcate']
+        mcate = data['mcate']
+        scate = data['scate']
+        dcate = data['dcate']
         
         X = (pid, text, freq)
         y = (bcate, mcate, scate, dcate)
