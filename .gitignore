@@ -1,3 +1,11 @@
+# data files
+data/
+model/
+tmp/
+*.pyc
+*.swp
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
