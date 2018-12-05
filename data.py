@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+
 os.environ['OMP_NUM_THREADS'] = '1'
 import re
 import sys
@@ -30,6 +31,7 @@ from keras.utils.np_utils import to_categorical
 from six.moves import cPickle
 
 from misc import get_logger, Option
+
 opt = Option('./config.json')
 
 re_sc = re.compile('[\!@#$%\^&\*\(\)-=\[\]\{\}\.,/\?~\+\'"|]')
@@ -132,6 +134,7 @@ class Data:
 
     def __init__(self):
         self.logger = get_logger('data')
+        self.cate_len = [57, 552, 3190, 404]
 
     def load_y_vocab(self):
         self.y_vocab = cPickle.loads(open(self.y_vocab_path, 'rb').read())
@@ -182,7 +185,8 @@ class Data:
     def _preprocessing(self, cls, data_path_list, div, chunk_size):
         chunk_offsets = self._split_data(data_path_list, div, chunk_size)
         num_chunks = len(chunk_offsets)
-        self.logger.info('split data into %d chunks, # of classes=%s' % (num_chunks, len(self.y_vocab)))
+        self.logger.info('split data into %d chunks, # of classes=%s>%s>%s>%s' % (
+        num_chunks, self.cate_len[0], self.cate_len[1], self.cate_len[2], self.cate_len[3]))
         pool = Pool(opt.num_workers)
         try:
             pool.map_async(preprocessing, [(cls,
@@ -201,12 +205,14 @@ class Data:
         return num_chunks
 
     def parse_data(self, label, h, i):
-        Y = self.y_vocab.get(label)
+        Y = [abs(int(cate)) - 1 for cate in label.split('>')]
         if Y is None and self.div in ['dev', 'test']:
-            Y = 0
+            Y = [0] * 4
         if Y is None and self.div != 'test':
             return [None] * 2
-        Y = to_categorical(Y, len(self.y_vocab))
+        Y_cate = []
+        for cate, cate_len in zip(Y, self.cate_len):
+            Y_cate.append(to_categorical(cate, cate_len))
 
         product = h['product'][i]
         if six.PY3:
@@ -215,7 +221,7 @@ class Data:
         words = [w.strip() for w in product]
         words = [w for w in words
                  if len(w) >= opt.min_word_length and len(w) < opt.max_word_length]
-        bigrams = [' '.join([words[idx], words[idx+1]]) for idx in range(len(words)-1)]
+        bigrams = [' '.join([words[idx], words[idx + 1]]) for idx in range(len(words) - 1)]
         words += bigrams
         if not words:
             return [None] * 2
@@ -229,21 +235,27 @@ class Data:
         for i in range(len(xv)):
             x[i] = xv[i][0]
             v[i] = xv[i][1]
-        return Y, (x, v)
+        return Y_cate, (x, v)
 
-    def create_dataset(self, g, size, num_classes):
+    def create_dataset(self, g, size, cate_classes):
         shape = (size, opt.max_len)
         g.create_dataset('uni', shape, chunks=True, dtype=np.int32)
         g.create_dataset('w_uni', shape, chunks=True, dtype=np.float32)
-        g.create_dataset('cate', (size, num_classes), chunks=True, dtype=np.int32)
+        g.create_dataset('bcate', (size, cate_classes[0]), chunks=True, dtype=np.int32)
+        g.create_dataset('mcate', (size, cate_classes[1]), chunks=True, dtype=np.int32)
+        g.create_dataset('scate', (size, cate_classes[2]), chunks=True, dtype=np.int32)
+        g.create_dataset('dcate', (size, cate_classes[3]), chunks=True, dtype=np.int32)
         g.create_dataset('pid', (size,), chunks=True, dtype='S12')
 
-    def init_chunk(self, chunk_size, num_classes):
+    def init_chunk(self, chunk_size, cate_classes):
         chunk_shape = (chunk_size, opt.max_len)
         chunk = {}
         chunk['uni'] = np.zeros(shape=chunk_shape, dtype=np.int32)
         chunk['w_uni'] = np.zeros(shape=chunk_shape, dtype=np.float32)
-        chunk['cate'] = np.zeros(shape=(chunk_size, num_classes), dtype=np.int32)
+        chunk['bcate'] = np.zeros(shape=(chunk_size, cate_classes[0]), dtype=np.int32)
+        chunk['mcate'] = np.zeros(shape=(chunk_size, cate_classes[1]), dtype=np.int32)
+        chunk['scate'] = np.zeros(shape=(chunk_size, cate_classes[2]), dtype=np.int32)
+        chunk['dcate'] = np.zeros(shape=(chunk_size, cate_classes[3]), dtype=np.int32)
         chunk['pid'] = []
         chunk['num'] = 0
         return chunk
@@ -252,11 +264,15 @@ class Data:
         num = chunk['num']
         dataset['uni'][offset:offset + num, :] = chunk['uni'][:num]
         dataset['w_uni'][offset:offset + num, :] = chunk['w_uni'][:num]
-        dataset['cate'][offset:offset + num] = chunk['cate'][:num]
+        dataset['bcate'][offset:offset + num] = chunk['bcate'][:num]
+        dataset['mcate'][offset:offset + num] = chunk['mcate'][:num]
+        dataset['scate'][offset:offset + num] = chunk['scate'][:num]
+        dataset['dcate'][offset:offset + num] = chunk['dcate'][:num]
         if with_pid_field:
             dataset['pid'][offset:offset + num] = chunk['pid'][:num]
 
     def copy_bulk(self, A, B, offset, y_offset, with_pid_field=False):
+        # usage가 없어서 수정 안함.
         num = B['cate'].shape[0]
         y_num = B['cate'].shape[1]
         A['uni'][offset:offset + num, :] = B['uni'][:num]
@@ -314,16 +330,16 @@ class Data:
 
         train = data_fout.create_group('train')
         dev = data_fout.create_group('dev')
-        self.create_dataset(train, train_size, len(self.y_vocab))
-        self.create_dataset(dev, dev_size, len(self.y_vocab))
+        self.create_dataset(train, train_size, self.cate_len)
+        self.create_dataset(dev, dev_size, self.cate_len)
         self.logger.info('train_size ~ %s, dev_size ~ %s' % (train_size, dev_size))
 
         sample_idx = 0
         dataset = {'train': train, 'dev': dev}
         num_samples = {'train': 0, 'dev': 0}
         chunk_size = opt.db_chunk_size
-        chunk = {'train': self.init_chunk(chunk_size, len(self.y_vocab)),
-                 'dev': self.init_chunk(chunk_size, len(self.y_vocab))}
+        chunk = {'train': self.init_chunk(chunk_size, self.cate_len),
+                 'dev': self.init_chunk(chunk_size, self.cate_len)}
         chunk_order = list(range(num_input_chunks))
         np.random.shuffle(chunk_order)
         for input_chunk_idx in chunk_order:
@@ -346,7 +362,10 @@ class Data:
                 idx = c['num']
                 c['uni'][idx] = v
                 c['w_uni'][idx] = w
-                c['cate'][idx] = y
+                c['bcate'][idx] = y[0]
+                c['mcate'][idx] = y[1]
+                c['scate'][idx] = y[2]
+                c['dcate'][idx] = y[3]
                 c['num'] += 1
                 if not is_train:
                     c['pid'].append(np.string_(pid))
@@ -355,7 +374,7 @@ class Data:
                         self.copy_chunk(dataset[t], chunk[t], num_samples[t],
                                         with_pid_field=t == 'dev')
                         num_samples[t] += chunk[t]['num']
-                        chunk[t] = self.init_chunk(chunk_size, len(self.y_vocab))
+                        chunk[t] = self.init_chunk(chunk_size, self.cate_len)
             sample_idx += len(data)
         for t in ['train', 'dev']:
             if chunk[t]['num'] > 0:
@@ -369,14 +388,18 @@ class Data:
             shape = (size, opt.max_len)
             ds['uni'].resize(shape)
             ds['w_uni'].resize(shape)
-            ds['cate'].resize((size, len(self.y_vocab)))
+            ds['bcate'].resize((size, self.cate_len[0]))
+            ds['mcate'].resize((size, self.cate_len[1]))
+            ds['scate'].resize((size, self.cate_len[2]))
+            ds['dcate'].resize((size, self.cate_len[3]))
 
         data_fout.close()
         meta = {'y_vocab': self.y_vocab}
         meta_fout.write(cPickle.dumps(meta, 2))
         meta_fout.close()
 
-        self.logger.info('# of classes: %s' % len(meta['y_vocab']))
+        self.logger.info(
+            '# of classes: %s>%s>%s>%s' % (self.cate_len[0], self.cate_len[1], self.cate_len[2], self.cate_len[3]))
         self.logger.info('# of samples on train: %s' % num_samples['train'])
         self.logger.info('# of samples on dev: %s' % num_samples['dev'])
         self.logger.info('data: %s' % os.path.join(output_dir, 'data.h5py'))
