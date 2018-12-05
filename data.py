@@ -204,7 +204,7 @@ class Data:
         return num_chunks
 
     def parse_data(self, label, h, i):
-        Y = [abs(int(cate)) for cate in label.split('>')]
+        Y = [abs(int(cate))-1 for cate in label.split('>')]
         if Y is None and self.div in ['dev', 'test']:
             Y = [0] * 4
         if Y is None and self.div != 'test':
