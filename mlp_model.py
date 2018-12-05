@@ -6,9 +6,9 @@ from misc import get_logger, Option
 
 opt = Option('./config.json')
 
-class TextOnly(nn.Module):
+class MLP(nn.Module):
     def __init__(self, opt):
-        super(TextOnly, self).__init__()
+        super(MLP, self).__init__()
         vocab_size = opt.unigram_hash_size + 1
         max_len = opt.max_len
         self.cate_emb_size = 10
@@ -43,14 +43,18 @@ class TextOnly(nn.Module):
         self.init_weights()
 
     def init_weights(self):
+        self.linear1[2].weight.data.uniform_(-0.05, 0.05)
+        self.linear2[2].weight.data.uniform_(-0.05, 0.05)
+        self.linear3[2].weight.data.uniform_(-0.05, 0.05)
+        self.linear4[2].weight.data.uniform_(-0.05, 0.05)
         
     def forward(self, inputs):
         # inputs: (words, frequency)
-        word_idx = inputs[/] #(max_len)
-        freq = inputs[/] #(max_len)
+        word_idx = inputs[1] #(N, max_len)
+        freq = inputs[2] #(N, max_len)
         
         word_embed = self.embd(word_idx) #(N, max_len, emb_size)
-        text_feature = torch.mm(word_embed.permute(1,0), freq.unsqueeze(1)) #(N, 128,1)
+        text_feature = torch.bmm(word_embed.permute(0,2,1), freq.unsqueeze(2)) #(N, 128, 1)
         h1 = text_feature.squeeze() #(N, 128)
         out1 = self.linear1(h1) #(N, 57)
         y1 = torch.max(out1, dim=1)[1] #(N)
@@ -66,7 +70,7 @@ class TextOnly(nn.Module):
         h4 = torch.cat((h3, y3), dim=1) #(N, 158)
         out4 = self.linear(h4) #(N, 404)
         
-        out = torch.cat((out1, out2, out3, out4), dim=1) #(N, 4203)
+        out = (out1, out2, out3, out4) #((N,57), (N,552), (N,3190), (N,404))
 
         return out
 
