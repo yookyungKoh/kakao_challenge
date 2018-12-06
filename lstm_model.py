@@ -21,6 +21,7 @@ class TextOnly(nn.Module):
         cate4_size = 404
 
         self.embd = nn.Embedding(vocab_size, opt.embd_size)
+        self.cate_embd = nn.Embedding()
         self.lstm = nn.LSTM(opt.embd_size, self.hidden_size)
 
 
