@@ -272,7 +272,6 @@ class Data:
             dataset['pid'][offset:offset + num] = chunk['pid'][:num]
 
     def copy_bulk(self, A, B, offset, y_offset, with_pid_field=False):
-        # usage가 없어서 수정 안함.
         num = B['cate'].shape[0]
         y_num = B['cate'].shape[1]
         A['uni'][offset:offset + num, :] = B['uni'][:num]

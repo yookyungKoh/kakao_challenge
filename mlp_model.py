@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from misc import get_logger, Option
 
 opt = Option('./config.json')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class MLP(nn.Module):
     def __init__(self, opt):
@@ -36,9 +37,9 @@ class MLP(nn.Module):
                 nn.ReLU(),
                 nn.Linear(opt.embd_size + 2*self.cate_emb_size, cate3_size))
         self.linear4 = nn.Sequential(
-                nn.Dropout(0.5)),
+                nn.Dropout(0.5),
                 nn.ReLU(),
-                nn.Linear(opt.embd_size + 3*self.cate_emb_size, cate4_size),
+                nn.Linear(opt.embd_size + 3*self.cate_emb_size, cate4_size))
 
         self.init_weights()
 
@@ -50,8 +51,8 @@ class MLP(nn.Module):
         
     def forward(self, inputs):
         # inputs: (words, frequency)
-        word_idx = inputs[1] #(N, max_len)
-        freq = inputs[2] #(N, max_len)
+        word_idx = inputs[0].type(torch.LongTensor).to(device) #(N, max_len)
+        freq = inputs[1].type(torch.FloatTensor).to(device) #(N, max_len)
         
         word_embed = self.embd(word_idx) #(N, max_len, emb_size)
         text_feature = torch.bmm(word_embed.permute(0,2,1), freq.unsqueeze(2)) #(N, 128, 1)
@@ -68,10 +69,8 @@ class MLP(nn.Module):
         y3 = torch.max(out3, dim=1)[1] 
         y3 = self.cate3_emb(y3)
         h4 = torch.cat((h3, y3), dim=1) #(N, 158)
-        out4 = self.linear(h4) #(N, 404)
+        out4 = self.linear4(h4) #(N, 404)
         
-        out = (out1, out2, out3, out4) #((N,57), (N,552), (N,3190), (N,404))
-
-        return out
+        return out1, out2, out3, out4
 
         
