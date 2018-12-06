@@ -186,7 +186,7 @@ class Data:
         chunk_offsets = self._split_data(data_path_list, div, chunk_size)
         num_chunks = len(chunk_offsets)
         self.logger.info('split data into %d chunks, # of classes=%s>%s>%s>%s' % (
-        num_chunks, self.cate_len[0], self.cate_len[1], self.cate_len[2], self.cate_len[3]))
+            num_chunks, self.cate_len[0], self.cate_len[1], self.cate_len[2], self.cate_len[3]))
         pool = Pool(opt.num_workers)
         try:
             pool.map_async(preprocessing, [(cls,
@@ -221,10 +221,10 @@ class Data:
         words = [w.strip() for w in product]
         words = [w for w in words
                  if len(w) >= opt.min_word_length and len(w) < opt.max_word_length]
-        bigrams = [' '.join([words[idx], words[idx + 1]]) for idx in range(len(words) - 1)]
-        words += bigrams
         if not words:
             return [None] * 2
+        bigrams = [' '.join([words[idx], words[idx + 1]]) for idx in range(len(words) - 1)]
+        words += bigrams
 
         hash_func = hash if six.PY2 else lambda x: mmh3.hash(x, seed=17)
         x = [hash_func(w) % opt.unigram_hash_size + 1 for w in words]
@@ -271,15 +271,15 @@ class Data:
         if with_pid_field:
             dataset['pid'][offset:offset + num] = chunk['pid'][:num]
 
-    def copy_bulk(self, A, B, offset, y_offset, with_pid_field=False):
-        # usage가 없어서 수정 안함.
-        num = B['cate'].shape[0]
-        y_num = B['cate'].shape[1]
-        A['uni'][offset:offset + num, :] = B['uni'][:num]
-        A['w_uni'][offset:offset + num, :] = B['w_uni'][:num]
-        A['cate'][offset:offset + num, y_offset:y_offset + y_num] = B['cate'][:num]
-        if with_pid_field:
-            A['pid'][offset:offset + num] = B['pid'][:num]
+    # def copy_bulk(self, A, B, offset, y_offset, with_pid_field=False):
+    #     # usage가 없어서 수정 안함.
+    #     num = B['cate'].shape[0]
+    #     y_num = B['cate'].shape[1]
+    #     A['uni'][offset:offset + num, :] = B['uni'][:num]
+    #     A['w_uni'][offset:offset + num, :] = B['w_uni'][:num]
+    #     A['cate'][offset:offset + num, y_offset:y_offset + y_num] = B['cate'][:num]
+    #     if with_pid_field:
+    #         A['pid'][offset:offset + num] = B['pid'][:num]
 
     def get_train_indices(self, size, train_ratio):
         train_indices = np.random.rand(size) < train_ratio
