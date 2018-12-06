@@ -18,10 +18,10 @@ class KakaoDataset(Dataset):
         self.m_chunk = self.data_ptr[3][self.begin_offset:self.end_offset]
         self.s_chunk = self.data_ptr[4][self.begin_offset:self.end_offset]
         self.d_chunk = self.data_ptr[5][self.begin_offset:self.end_offset]
-        self.total = len(self.t_chunk)
+        self.total = len(self.data_ptr[0])
 
     def __len__(self):
-        return len(self.t_chunk)
+        return self.total
 
     def __getitem__(self, idx):
         if not self.is_range(idx):
