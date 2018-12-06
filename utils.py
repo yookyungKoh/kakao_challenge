@@ -4,25 +4,48 @@ import os
 import h5py
 
 class KakaoDataset(Dataset):
-    def __init__(self, data_root):
+    def __init__(self, data_root, chunk_size=20000):
         data_path = os.path.join(data_root, 'data.h5py')
         self.data = self._load_data(data_path)
-        chunk = self._read_data(self.data)
+        self.chunk_size = chunk_size
+        self.begin_offset = 0
+        self.end_offset = self.begin_offset + chunk_size
+        self.data_ptr = self._read_data(self.data)
 #        self.p = chunk[0]
-        self.t = chunk[0]
-        self.f = chunk[1]
-        self.b = chunk[2]
-        self.m = chunk[3]
-        self.s = chunk[4]
-        self.d = chunk[5]
-         
+        self.t_chunk = self.data_ptr[0][self.begin_offset:self.end_offset]
+        self.f_chunk = self.data_ptr[1][self.begin_offset:self.end_offset]
+        self.b_chunk = self.data_ptr[2][self.begin_offset:self.end_offset]
+        self.m_chunk = self.data_ptr[3][self.begin_offset:self.end_offset]
+        self.s_chunk = self.data_ptr[4][self.begin_offset:self.end_offset]
+        self.d_chunk = self.data_ptr[5][self.begin_offset:self.end_offset]
+        self.total = len(self.t_chunk)
+
     def __len__(self):
-        return len(self.t)
+        return len(self.t_chunk)
 
     def __getitem__(self, idx):
-        X = list((self.t[idx], self.f[idx]))
-        y = list((self.b[idx], self.m[idx], self.s[idx], self.d[idx]))
+        if not self.is_range(idx):
+            # load next chunk.
+            self.begin_offset = self.end_offset
+            self.end_offset = min(self.begin_offset + self.chunk_size, self.total)
+            self.t_chunk = self.data_ptr[0][self.begin_offset:self.end_offset]
+            self.f_chunk = self.data_ptr[1][self.begin_offset:self.end_offset]
+            self.b_chunk = self.data_ptr[2][self.begin_offset:self.end_offset]
+            self.m_chunk = self.data_ptr[3][self.begin_offset:self.end_offset]
+            self.s_chunk = self.data_ptr[4][self.begin_offset:self.end_offset]
+            self.d_chunk = self.data_ptr[5][self.begin_offset:self.end_offset]
+        idx = self.begin_offset + idx
+        X = list((self.t_chunk[idx], self.f_chunk[idx]))
+        y = list((self.b_chunk[idx], self.m_chunk[idx], self.s_chunk[idx], self.d_chunk[idx]))
+
         return X, y
+
+    def is_range(self, i):
+        if self.begin_offset is not None and i < self.begin_offset:
+            assert False, '%s < %s, index can not be lower than begin offset.' % (i, self.begin_offset)
+        if self.end_offset is not None and self.end_offset <= i:
+            return False
+        return True
 
     def _load_data(self, data_path):
         data = h5py.File(data_path, 'r')
@@ -39,7 +62,7 @@ class KakaoDataset(Dataset):
         mcate = data['mcate']
         scate = data['scate']
         dcate = data['dcate']
-         
+
         return text, freq, bcate, mcate, scate, dcate
 
-        
+

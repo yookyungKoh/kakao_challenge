@@ -186,7 +186,7 @@ class Data:
         chunk_offsets = self._split_data(data_path_list, div, chunk_size)
         num_chunks = len(chunk_offsets)
         self.logger.info('split data into %d chunks, # of classes=%s>%s>%s>%s' % (
-        num_chunks, self.cate_len[0], self.cate_len[1], self.cate_len[2], self.cate_len[3]))
+            num_chunks, self.cate_len[0], self.cate_len[1], self.cate_len[2], self.cate_len[3]))
         pool = Pool(opt.num_workers)
         try:
             pool.map_async(preprocessing, [(cls,
@@ -221,10 +221,10 @@ class Data:
         words = [w.strip() for w in product]
         words = [w for w in words
                  if len(w) >= opt.min_word_length and len(w) < opt.max_word_length]
-        bigrams = [' '.join([words[idx], words[idx + 1]]) for idx in range(len(words) - 1)]
-        words += bigrams
         if not words:
             return [None] * 2
+        bigrams = [' '.join([words[idx], words[idx + 1]]) for idx in range(len(words) - 1)]
+        words += bigrams
 
         hash_func = hash if six.PY2 else lambda x: mmh3.hash(x, seed=17)
         x = [hash_func(w) % opt.unigram_hash_size + 1 for w in words]
