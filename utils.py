@@ -4,10 +4,11 @@ import os
 import h5py
 
 class KakaoDataset(Dataset):
-    def __init__(self, data_root, chunk_size=20000):
+    def __init__(self, data_root, chunk_size=20000, div):
         data_path = os.path.join(data_root, 'data.h5py')
         self.data_root = data_root
         self.data = self._load_data(data_path)
+        self.div = div
         self.chunk_size = chunk_size
         self.begin_offset = 0
         self.end_offset = self.begin_offset + chunk_size
@@ -54,9 +55,9 @@ class KakaoDataset(Dataset):
     def _load_data(self, data_path):
         data = h5py.File(data_path, 'r')
         if 'train' in data_path:
-            return data['train']
+            return data[self.div]
         elif 'dev' in data_path:
-            return data['dev']
+            return data[self.div]
 
     def _read_data(self, data):
 #        pid = data['pid']
