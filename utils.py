@@ -4,7 +4,7 @@ import os
 import h5py
 
 class KakaoDataset(Dataset):
-    def __init__(self, data_root, chunk_size=20000, div):
+    def __init__(self, data_root, div, chunk_size=20000):
         data_path = os.path.join(data_root, 'data.h5py')
         self.data_root = data_root
         self.data = self._load_data(data_path)
