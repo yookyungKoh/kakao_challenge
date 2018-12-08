@@ -4,6 +4,8 @@ model/
 tmp/
 *.pyc
 *.swp
+results/
+checkpoints/
 
 
 # Byte-compiled / optimized / DLL files

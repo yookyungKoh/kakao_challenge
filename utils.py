@@ -6,6 +6,7 @@ import h5py
 class KakaoDataset(Dataset):
     def __init__(self, data_root, chunk_size=20000):
         data_path = os.path.join(data_root, 'data.h5py')
+        self.data_root = data_root
         self.data = self._load_data(data_path)
         self.chunk_size = chunk_size
         self.begin_offset = 0
@@ -34,9 +35,12 @@ class KakaoDataset(Dataset):
             self.m_chunk = self.data_ptr[3][self.begin_offset:self.end_offset]
             self.s_chunk = self.data_ptr[4][self.begin_offset:self.end_offset]
             self.d_chunk = self.data_ptr[5][self.begin_offset:self.end_offset]
-        idx = self.begin_offset + idx
+        idx = idx - self.begin_offset
         X = list((self.t_chunk[idx], self.f_chunk[idx]))
         y = list((self.b_chunk[idx], self.m_chunk[idx], self.s_chunk[idx], self.d_chunk[idx]))
+
+        if idx + self.begin_offset + 1 >= self.total:
+            self.__init__(self.data_root, self.chunk_size)
 
         return X, y
 
@@ -51,6 +55,10 @@ class KakaoDataset(Dataset):
         data = h5py.File(data_path, 'r')
         if 'train' in data_path:
             return data['train']
+#            train_data = data['train']
+#            valid_data = data['dev']
+#            return train_data, valid_data
+        
         elif 'dev' in data_path:
             return data['dev']
 
