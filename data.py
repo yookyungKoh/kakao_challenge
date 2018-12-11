@@ -27,6 +27,8 @@ import h5py
 import numpy as np
 import mmh3
 import six
+import itertools
+
 from keras.utils.np_utils import to_categorical
 from six.moves import cPickle
 
@@ -223,8 +225,10 @@ class Data:
                  if len(w) >= opt.min_word_length and len(w) < opt.max_word_length]
         if not words:
             return [None] * 2
-        bigrams = [' '.join([words[idx], words[idx + 1]]) for idx in range(len(words) - 1)]
-        words += bigrams
+#        bigrams = [' '.join([words[idx], words[idx + 1]]) for idx in range(len(words) - 1)]
+#        words += bigrams
+        chars = itertools.chain(*[list(w) for w in words])
+        words += chars
 
         hash_func = hash if six.PY2 else lambda x: mmh3.hash(x, seed=17)
         x = [hash_func(w) % opt.unigram_hash_size + 1 for w in words]

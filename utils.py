@@ -7,8 +7,8 @@ class KakaoDataset(Dataset):
     def __init__(self, data_root, div, chunk_size=20000):
         data_path = os.path.join(data_root, 'data.h5py')
         self.data_root = data_root
-        self.data = self._load_data(data_path)
         self.div = div
+        self.data = self._load_data(data_path, div)
         self.chunk_size = chunk_size
         self.begin_offset = 0
         self.end_offset = self.begin_offset + chunk_size
@@ -41,7 +41,7 @@ class KakaoDataset(Dataset):
         y = list((self.b_chunk[idx], self.m_chunk[idx], self.s_chunk[idx], self.d_chunk[idx]))
 
         if idx + self.begin_offset + 1 >= self.total:
-            self.__init__(self.data_root, self.chunk_size)
+            self.__init__(self.data_root, self.div, self.chunk_size)
 
         return X, y
 
@@ -52,20 +52,9 @@ class KakaoDataset(Dataset):
             return False
         return True
 
-    def _load_data(self, data_path):
+    def _load_data(self, data_path, div):
         data = h5py.File(data_path, 'r')
-        if 'train' in data_path:
-<<<<<<< HEAD
-            return data['train']
-#            train_data = data['train']
-#            valid_data = data['dev']
-#            return train_data, valid_data
-        
-=======
-            return data[self.div]
->>>>>>> 542302db7e4d2a8640e4233f92202e21208e56d1
-        elif 'dev' in data_path:
-            return data[self.div]
+        return data[div]
 
     def _read_data(self, data):
 #        pid = data['pid']
@@ -77,5 +66,4 @@ class KakaoDataset(Dataset):
         dcate = data['dcate']
 
         return text, freq, bcate, mcate, scate, dcate
-
 

@@ -29,17 +29,20 @@ inv_cate1 = get_inverted_cate1(cate1)
 load_time = time.time()
 data_root = './data/'
 train_path = os.path.join(data_root, 'train/')
-dev_path = os.path.join(data_root, 'dev/')
 
-train_dataset = KakaoDataset(train_path, chunk_size=40000)
-dev_dataset = KakaoDataset(dev_path, chunk_size=40000)
+train_dataset = KakaoDataset(train_path, 'train', chunk_size=20000)
+valid_dataset = KakaoDataset(train_path, 'dev', chunk_size=20000)
 
 train_loader = DataLoader(train_dataset, batch_size=opt.batch_size)
-valid_loader = DataLoader(dev_dataset, batch_size=opt.batch_size)
+valid_loader = DataLoader(valid_dataset, batch_size=opt.batch_size)
 
-save_model_path = './model/checkpoints/bi_mlp'
-best_model_path = './model/best/bi_mlp'
-result_path = './results/bi_mlp_result.tsv'
+print('# training samples: {:,}'.format(len(train_dataset)))
+print('# validation samples: {:,}'.format(len(valid_dataset)))
+
+save_model_path = './model/checkpoints/mlp_1'
+best_model_path = './model/best/mlp_1_best.pth'
+result_path = './results/mlp_1_result.tsv'
+continue_train = False
 
 def get_acc(x, y):
     pred = torch.max(x,1)[1]
@@ -50,28 +53,31 @@ def get_acc(x, y):
 
 def main():
     opt = Option('./config.json')
-    opt.num_epochs = 1
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # model 
     model = MLP(opt).to(device)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.9, 0.999))
+    num_params = sum([p.numel() for p in model.parameters()])
+    print('Total # of params: {:,}'.format(num_params))
+
+    if continue_train == True:
+        model.load_state_dict(torch.load(best_model_path))
 
     best_loss = 100000.
-#    for epoch in range(opt.num_epochs):
-#        train(opt, train_loader, model, criterion, optimizer, epoch)
-#        
+    for epoch in range(opt.num_epochs):
+        train(opt, train_loader, model, criterion, optimizer, epoch) 
+
 #        if val_loss < best_loss:
 #            best_loss = val_loss
-#            torch.save(model.state_dict(), best_model_path + '_E%d.pth'%(epoch+1))
+#            torch.save(model.state_dict(), best_model_path)
 #            print('model saved at loss: %.4f'%(best_loss))
-#        
-#        if (epoch+1) % 1 == 0:
-#            torch.save(model.state_dict(), save_model_path + '_E%d.pth'%(epoch+1))
-    
-    model.load_state_dict(torch.load(save_model_path+'_E1.pth'))
-    evaluate(opt, valid_loader, model, criterion)
+        
+        if (epoch+1) % 5 == 0:
+            torch.save(model.state_dict(), save_model_path + '_E%d.pth'%(epoch+1))
+
+    val_loss = evaluate(opt, valid_loader, model, criterion)
 
     pid_order = []
     h = h5py.File('./data/dev/data.h5py', 'r')['dev']
@@ -147,15 +153,18 @@ def evaluate(opt, dataloader, model, criterion):
             acc4 += get_acc(out[3], targets[3]).item()
             valid_acc = (acc1+acc2+acc3+acc4)/4
 
-#            out_str.write('Step [%d/%d] | Loss: %.4f | Acc: %.4f | cate1: %.4f | cate2: %.4f | cate3: %.4f | cate4: %.4f \r' 
-#                        %(i+1, len(dataloader), valid_loss/(i+1), valid_acc/(i+1), acc1/(i+1), acc2/(i+1), acc3/(i+1), acc4/(i+1)))
-#            out_str.flush()
+            out_str.write('Step [%d/%d] | Loss: %.4f | Acc: %.4f | cate1: %.4f | cate2: %.4f | cate3: %.4f | cate4: %.4f \r' 
+                        %(i+1, len(dataloader), valid_loss/(i+1), valid_acc/(i+1), acc1/(i+1), acc2/(i+1), acc3/(i+1), acc4/(i+1)))
+            out_str.flush()
             
             idx = end_idx
             out_str.write('start: %d | end: %d \r' %(start_idx, end_idx))
             out_str.flush()
 
             create_pred_file(start_idx, end_idx, out, result_path, inv_cate1)
+
+    valid_loss /= (i+1)
+    return valid_loss
 
 def create_pred_file(start_idx, end_idx, out, out_path, inv_cate1):
     """
@@ -175,23 +184,25 @@ def create_pred_file(start_idx, end_idx, out, out_path, inv_cate1):
     m = torch.max(out[1],1)[1]
     s = torch.max(out[2],1)[1]
     d = torch.max(out[3],1)[1]
-#    b, m, s, d = list(map(lambda x: x+1, (b,m,s,d)))
-
+    b, m, s, d = list(map(lambda x: x+1, (b,m,s,d)))
+    s[s==1] = -1
+    d[d==1] = -1
+    
     line = '{pid}\t{b}\t{m}\t{s}\t{d}'
     for i, pid in enumerate(pid_batch):
+
+        assert b[i].item() in inv_cate1['b']
+        assert m[i].item() in inv_cate1['m']
+        assert s[i].item() in inv_cate1['s']
+        assert d[i].item() in inv_cate1['d']
+
+#        bcate = inv_cate1['b'][b[i].item()]
+#        mcate = inv_cate1['m'][m[i].item()]
+#        scate = inv_cate1['s'][s[i].item()]
+#        dcate = inv_cate1['d'][d[i].item()]
+        
         with open(result_path, 'a') as f:
-                        
-            assert b[i] in inv_cate1['b']
-            assert m[i] in inv_cate1['m']
-            assert s[i] in inv_cate1['s']
-            assert d[i] in inv_cate1['d']
-
-            b = inv_cate1['b'][b[i]]
-            m = inv_cate1['b'][m[i]]
-            s = inv_cate1['b'][s[i]]
-            d = inv_cate1['b'][d[i]]
-
-            f.write(line.format(pid=pid, b=b, m=m, s=s, d=d))
+            f.write(line.format(pid=pid, b=b[i].item(), m=m.item(), s=s.item(), d=d.item()))
             f.write('\n')
 
 if __name__ == '__main__':
