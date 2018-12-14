@@ -29,12 +29,15 @@ inv_cate1 = get_inverted_cate1(cate1)
 load_time = time.time()
 data_root = './data/'
 train_path = os.path.join(data_root, 'train/')
+dev_path = os.path.join(data_root, 'dev/')
 
-train_dataset = KakaoDataset(train_path, 'train', chunk_size=20000)
-valid_dataset = KakaoDataset(train_path, 'dev', chunk_size=20000)
+train_dataset = KakaoDataset(train_path, 'train', chunk_size=40000)
+valid_dataset = KakaoDataset(train_path, 'dev', chunk_size=40000)
+dev_dataset = KakaoDataset(dev_path, 'dev', chunk_size=40000)
 
 train_loader = DataLoader(train_dataset, batch_size=opt.batch_size)
 valid_loader = DataLoader(valid_dataset, batch_size=opt.batch_size)
+dev_loader = DataLoader(dev_dataset, batch_size=opt.batch_size)
 
 print('# training samples: {:,}'.format(len(train_dataset)))
 print('# validation samples: {:,}'.format(len(valid_dataset)))
@@ -42,7 +45,7 @@ print('# validation samples: {:,}'.format(len(valid_dataset)))
 save_model_path = './model/checkpoints/mlp_1'
 best_model_path = './model/best/mlp_1_best.pth'
 result_path = './results/mlp_1_result.tsv'
-continue_train = False
+continue_train = True
 
 def get_acc(x, y):
     pred = torch.max(x,1)[1]
@@ -50,6 +53,12 @@ def get_acc(x, y):
     correct = (pred == y).float()
     acc = torch.mean(correct)
     return acc
+
+def get_score(b_acc, m_acc, s_acc, d_acc, i):
+    bw, mw, sw, dw = 1, 1.2, 1.3, 1.4
+    score = (b_acc*bw + m_acc*mw + s_acc*sw + d_acc*dw)/4
+    return score/(i+1)
+
 
 def main():
     opt = Option('./config.json')
@@ -62,22 +71,26 @@ def main():
     num_params = sum([p.numel() for p in model.parameters()])
     print('Total # of params: {:,}'.format(num_params))
 
-    if continue_train == True:
-        model.load_state_dict(torch.load(best_model_path))
-
-    best_loss = 100000.
-    for epoch in range(opt.num_epochs):
-        train(opt, train_loader, model, criterion, optimizer, epoch) 
+#    if continue_train == True:
+#        model.load_state_dict(torch.load(save_model_path+'_E75.pth'))
+#    
+#    opt.num_epochs = 25
+#    best_loss = 100000.
+#    for epoch in range(opt.num_epochs):
+#        train(opt, train_loader, model, criterion, optimizer, epoch) 
 
 #        if val_loss < best_loss:
 #            best_loss = val_loss
 #            torch.save(model.state_dict(), best_model_path)
 #            print('model saved at loss: %.4f'%(best_loss))
         
-        if (epoch+1) % 5 == 0:
-            torch.save(model.state_dict(), save_model_path + '_E%d.pth'%(epoch+1))
+#        if (epoch+1) % 5 == 0:
+#            torch.save(model.state_dict(), save_model_path + '_E%d.pth'%(epoch++75+1))
+#
+#    val_loss = evaluate(opt, valid_loader, model, criterion)
 
-    val_loss = evaluate(opt, valid_loader, model, criterion)
+    model.load_state_dict(torch.load(save_model_path+'_E100.pth'))
+    dev_loss = evaluate(opt, dev_loader, model, criterion)
 
     pid_order = []
     h = h5py.File('./data/dev/data.h5py', 'r')['dev']
@@ -100,6 +113,8 @@ def train(opt, dataloader, model, criterion, optimizer, epoch):
     model.train()
     train_loss = 0.
     acc1, acc2, acc3, acc4 = 0., 0., 0., 0.
+    train_score = 0.
+
     for i, (inputs, targets) in enumerate(dataloader):
         targets = [t.type(torch.FloatTensor).to(device) for t in targets]
         out = model(inputs)
@@ -115,14 +130,14 @@ def train(opt, dataloader, model, criterion, optimizer, epoch):
         acc2 += get_acc(out[1], targets[1]).item()
         acc3 += get_acc(out[2], targets[2]).item()
         acc4 += get_acc(out[3], targets[3]).item()
-        train_acc = (acc1+acc2+acc3+acc4)/4
-        
+        train_score += get_score(acc1, acc2, acc3, acc4, i)
+
         model.zero_grad()
         total_loss.backward()
         optimizer.step()
 
-        out_str.write('Epoch [%d/%d] | Step [%d/%d] | Loss: %.4f | Acc: %.4f | cate1: %.4f | cate2: %.4f | cate3: %.4f | cate4: %.4f \r' 
-                    %(epoch+1, opt.num_epochs, i+1, len(dataloader), train_loss/(i+1), train_acc/(i+1), acc1/(i+1), acc2/(i+1), acc3/(i+1), acc4/(i+1)))
+        out_str.write('Epoch [%d/%d] | Step [%d/%d] | Loss: %.4f | Score: %.4f | b: %.4f | m: %.4f | s: %.4f | d: %.4f \r' 
+                    %(epoch+1, opt.num_epochs, i+1, len(dataloader), train_loss/(i+1), train_score/(i+1), acc1/(i+1), acc2/(i+1), acc3/(i+1), acc4/(i+1)))
         out_str.flush()
 
     print('Training time: %.2f'%((time.time()-start_time)/ 60))
@@ -131,7 +146,7 @@ def evaluate(opt, dataloader, model, criterion):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     valid_loss = 0.
     acc1, acc2, acc3, acc4 = 0., 0., 0., 0.
-    
+    valid_score = 0.
     with torch.no_grad():
         idx = 0
         for i, (inputs, targets) in enumerate(dataloader):
@@ -151,22 +166,22 @@ def evaluate(opt, dataloader, model, criterion):
             acc2 += get_acc(out[1], targets[1]).item()
             acc3 += get_acc(out[2], targets[2]).item()
             acc4 += get_acc(out[3], targets[3]).item()
-            valid_acc = (acc1+acc2+acc3+acc4)/4
+            valid_score += get_score(acc1, acc2, acc3, acc4, i)
 
-            out_str.write('Step [%d/%d] | Loss: %.4f | Acc: %.4f | cate1: %.4f | cate2: %.4f | cate3: %.4f | cate4: %.4f \r' 
-                        %(i+1, len(dataloader), valid_loss/(i+1), valid_acc/(i+1), acc1/(i+1), acc2/(i+1), acc3/(i+1), acc4/(i+1)))
+            out_str.write('Step [%d/%d] | Loss: %.4f | Score: %.4f | cate1: %.4f | cate2: %.4f | cate3: %.4f | cate4: %.4f \r' 
+                        %(i+1, len(dataloader), valid_loss/(i+1), valid_score/(i+1), acc1/(i+1), acc2/(i+1), acc3/(i+1), acc4/(i+1)))
             out_str.flush()
             
             idx = end_idx
             out_str.write('start: %d | end: %d \r' %(start_idx, end_idx))
             out_str.flush()
 
-            create_pred_file(start_idx, end_idx, out, result_path, inv_cate1)
+#            create_pred_file(train_path, start_idx, end_idx, out, result_path, inv_cate1)
 
     valid_loss /= (i+1)
     return valid_loss
 
-def create_pred_file(start_idx, end_idx, out, out_path, inv_cate1):
+def create_pred_file(data_path, start_idx, end_idx, out, out_path, inv_cate1):
     """
     idx : to crop pid
     out : model output (tuple)
@@ -176,7 +191,7 @@ def create_pred_file(start_idx, end_idx, out, out_path, inv_cate1):
         - out[3]: category 4 prediction (N, 404)
     """
     pid_order = []
-    h = h5py.File('./data/dev/data.h5py', 'r')['dev']
+    h = h5py.File(data_path+'data.h5py', 'r')['dev']
     pid_order.extend(h['pid'][::])
     pid_batch = pid_order[start_idx : end_idx] #(N)
 
@@ -190,19 +205,13 @@ def create_pred_file(start_idx, end_idx, out, out_path, inv_cate1):
     
     line = '{pid}\t{b}\t{m}\t{s}\t{d}'
     for i, pid in enumerate(pid_batch):
-
         assert b[i].item() in inv_cate1['b']
         assert m[i].item() in inv_cate1['m']
         assert s[i].item() in inv_cate1['s']
         assert d[i].item() in inv_cate1['d']
-
-#        bcate = inv_cate1['b'][b[i].item()]
-#        mcate = inv_cate1['m'][m[i].item()]
-#        scate = inv_cate1['s'][s[i].item()]
-#        dcate = inv_cate1['d'][d[i].item()]
         
         with open(result_path, 'a') as f:
-            f.write(line.format(pid=pid, b=b[i].item(), m=m.item(), s=s.item(), d=d.item()))
+            f.write(line.format(pid=pid, b=b[i].item(), m=m[i].item(), s=s[i].item(), d=d[i].item()))
             f.write('\n')
 
 if __name__ == '__main__':
