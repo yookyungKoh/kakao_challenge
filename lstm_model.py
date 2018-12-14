@@ -5,11 +5,11 @@ import torch.nn.functional as F
 from misc import get_logger, Option
 
 opt = Option('./config.json')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
-class TextOnly(nn.Module):
+class TextOnlyLSTM(nn.Module):
     def __init__(self, opt):
-        super(TextOnly, self).__init__()
+        super(TextOnlyLSTM, self).__init__()
         vocab_size = opt.unigram_hash_size + 1
         max_len = opt.max_len
         self.cate_emb_size = 128
@@ -50,35 +50,27 @@ class TextOnly(nn.Module):
 
     def forward(self, inputs, cates):
         # inputs: (words, frequency)
-        word_idx = inputs[0]  # (max_len)
-        freq = inputs[1]  # (max_len)
+        word_idx = inputs[0].type(torch.LongTensor).to(device)  # (N, max_len)
+        freq = inputs[1].type(torch.FloatTensor).to(device)  # (N, max_len)
         word_embed = self.embd(word_idx)  # (N, max_len, emb_size)
-        text_feature = torch.bmm(word_embed.permute(2, 1), freq.unsqueeze(2))  # (N, 128,1)
+        text_feature = torch.bmm(word_embed.permute(0, 2, 1), freq.unsqueeze(2))  # (N, emb_size, max_len) b* (N, max_len, 1) -> (N, 128,1)
         h1 = text_feature.squeeze()  # (N, 128)
 
-        bcate, mcate, scate = cates
-        bcate_embd = self.bcate_embd(bcate)
+        bcate, mcate, scate, _ = [cate.argmax(dim=1).long() for cate in cates]  # (N,1), (N,1), (N,1), _ = (N,4)
+        bcate_embd = self.bcate_embd(bcate)  # (N, 1, emb_size)
         mcate_embd = self.mcate_embd(mcate)
         scate_embd = self.scate_embd(scate)
 
-        embeddings = torch.cat((h1.unsqueeze(1), bcate_embd.unsqueeze(1), mcate_embd.unsqueeze(1), scate_embd.unsqueeze(1)), 1)
+        embeddings = torch.cat((h1.unsqueeze(1), bcate_embd.unsqueeze(1), mcate_embd.unsqueeze(1), scate_embd.unsqueeze(1)), 1)  # (N, 4, emb_size=128)
 
         hiddens, _ = self.lstm(embeddings)
 
-        out1 = self.linear1(h1)  # (N, 57)
-        y1 = torch.max(out1, dim=1)[1]  # (N)
-        y1 = self.cate1_emb(y1)  # (N, 10)
-        h2 = torch.cat((h1, y1), dim=1)  # (N, 138)
-        out2 = self.linear2(h2)  # (N, 552)
-        y2 = torch.max(out2, dim=1)[1]
-        y2 = self.cate2_emb(y2)
-        h3 = torch.cat((h2, y2), dim=1)  # (N, 148)
-        out3 = self.linear3(h3)  # (N, 3190)
-        y3 = torch.max(out3, dim=1)[1]
-        y3 = self.cate3_emb(y3)
-        h4 = torch.cat((h3, y3), dim=1)  # (N, 158)
-        out4 = self.linear(h4)  # (N, 404)
+        h1, h2, h3, h4 = [hiddens[:, time_step].squeeze() for time_step in range(4)]
+        out1 = self.bcate_linear(h1)  # (N, 57)
+        out2 = self.mcate_linear(h2)  # (N, 552)
+        out3 = self.scate_linear(h3)  # (N, 3190)
+        out4 = self.dcate_linear(h4)  # (N, 404)
 
         out = torch.cat((out1, out2, out3, out4), dim=1)  # (N, 4203)
 
-        return out
+        return out1, out2, out3, out4

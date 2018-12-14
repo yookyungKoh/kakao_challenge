@@ -10,6 +10,7 @@ import json
 import six
 
 from mlp_model import MLP
+from lstm_model import TextOnlyLSTM
 from utils import KakaoDataset
 from misc import Option, get_logger
 
@@ -56,7 +57,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # model 
-    model = MLP(opt).to(device)
+    model = TextOnlyLSTM(opt).to(device)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.9, 0.999))
     num_params = sum([p.numel() for p in model.parameters()])
@@ -102,7 +103,7 @@ def train(opt, dataloader, model, criterion, optimizer, epoch):
     acc1, acc2, acc3, acc4 = 0., 0., 0., 0.
     for i, (inputs, targets) in enumerate(dataloader):
         targets = [t.type(torch.FloatTensor).to(device) for t in targets]
-        out = model(inputs)
+        out = model(inputs, targets)
 
         bloss = criterion(out[0], targets[0])
         mloss = criterion(out[1], targets[1])
@@ -138,7 +139,7 @@ def evaluate(opt, dataloader, model, criterion):
             start_idx = idx
             end_idx = start_idx + len(inputs[0])
             targets = [t.type(torch.FloatTensor).to(device) for t in targets]
-            out = model(inputs)
+            out = model(inputs, targets)
             
             bloss = criterion(out[0], targets[0])
             mloss = criterion(out[1], targets[1])
