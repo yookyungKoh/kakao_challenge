@@ -19,7 +19,7 @@
     ],
     "unigram_hash_size": 200000,
     "min_word_length": 1,
-    "max_word_length": 20,
+    "max_word_length": 35,
     "max_len": 80,
     "chunk_size": 20000,
     "db_chunk_size": 100000,
