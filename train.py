@@ -74,7 +74,6 @@ def main():
     if continue_train == True:
         model.load_state_dict(torch.load(best_model_path))
   
-    opt.num_epochs = 55 
     best_loss = 100000.
     for epoch in range(opt.num_epochs):
         train(opt, train_loader, model, criterion, optimizer, epoch) 
