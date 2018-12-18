@@ -45,7 +45,7 @@ print('# validation samples: {:,}'.format(len(valid_dataset)))
 save_model_path = './model/checkpoints/mlp_2'
 best_model_path = './model/best/mlp_2_best.pth'
 result_path = './results/mlp_2_result.tsv'
-continue_train = True
+continue_train = False
 
 def get_acc(x, y):
     pred = torch.max(x,1)[1]
@@ -74,7 +74,6 @@ def main():
     if continue_train == True:
         model.load_state_dict(torch.load(best_model_path))
   
-    model.load_state_dict(torch.load(best_model_path)) 
     opt.num_epochs = 55 
     best_loss = 100000.
     for epoch in range(opt.num_epochs):
@@ -87,7 +86,7 @@ def main():
             print('model saved at loss: %.4f'%(best_loss))
        
         if (epoch+1) % 5 == 0:
-            torch.save(model.state_dict(), save_model_path + '_E%d.pth'%(epoch+45+1))
+            torch.save(model.state_dict(), save_model_path + '_E%d.pth'%(epoch+1))
     
     model.load_state_dict(torch.load(best_model_path))
     dev_loss = evaluate(opt, dev_loader, model, criterion, make_file=True)
