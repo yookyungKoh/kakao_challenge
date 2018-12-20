@@ -31,8 +31,8 @@ load_time = time.time()
 data_root = './data/'
 train_path = os.path.join(data_root, 'train/')
 
-train_dataset = KakaoDataset(train_path, 'train', chunk_size=20000)
-valid_dataset = KakaoDataset(train_path, 'dev', chunk_size=20000)
+train_dataset = KakaoDataset(train_path, 'train', chunk_size=100000)
+valid_dataset = KakaoDataset(train_path, 'dev', chunk_size=100000)
 
 train_loader = DataLoader(train_dataset, batch_size=opt.batch_size)
 valid_loader = DataLoader(valid_dataset, batch_size=opt.batch_size)
@@ -43,7 +43,7 @@ print('# validation samples: {:,}'.format(len(valid_dataset)))
 save_model_path = './model/checkpoints/mlp_1'
 best_model_path = './model/best/mlp_1_best.pth'
 result_path = './results/mlp_1_result.tsv'
-continue_train = False
+continue_train = True
 
 def get_acc(x, y):
     pred = torch.max(x,1)[1]
@@ -64,17 +64,18 @@ def main():
     print('Total # of params: {:,}'.format(num_params))
 
     if continue_train == True:
-        model.load_state_dict(torch.load(best_model_path))
+        model.load_state_dict(torch.load(save_model_path + '_E%d.pth' % 15))
 
     best_loss = 100000.
     for epoch in range(opt.num_epochs):
+        epoch += 15
         train(opt, train_loader, model, criterion, optimizer, epoch) 
 
 #        if val_loss < best_loss:
 #            best_loss = val_loss
 #            torch.save(model.state_dict(), best_model_path)
 #            print('model saved at loss: %.4f'%(best_loss))
-        
+        evaluate(opt, valid_loader, model, criterion)
         if (epoch+1) % 5 == 0:
             torch.save(model.state_dict(), save_model_path + '_E%d.pth'%(epoch+1))
 
@@ -139,7 +140,7 @@ def evaluate(opt, dataloader, model, criterion):
             start_idx = idx
             end_idx = start_idx + len(inputs[0])
             targets = [t.type(torch.FloatTensor).to(device) for t in targets]
-            out = model(inputs, targets)
+            out = model(inputs, targets, val=True)
             
             bloss = criterion(out[0], targets[0])
             mloss = criterion(out[1], targets[1])
@@ -154,15 +155,17 @@ def evaluate(opt, dataloader, model, criterion):
             acc4 += get_acc(out[3], targets[3]).item()
             valid_acc = (acc1+acc2+acc3+acc4)/4
 
-            out_str.write('Step [%d/%d] | Loss: %.4f | Acc: %.4f | cate1: %.4f | cate2: %.4f | cate3: %.4f | cate4: %.4f \r' 
+            out_str.write('Step [%d/%d] | Loss: %.4f | Acc: %.4f | cate1: %.4f | cate2: %.4f | cate3: %.4f | cate4: %.4f \r'
                         %(i+1, len(dataloader), valid_loss/(i+1), valid_acc/(i+1), acc1/(i+1), acc2/(i+1), acc3/(i+1), acc4/(i+1)))
             out_str.flush()
-            
             idx = end_idx
-            out_str.write('start: %d | end: %d \r' %(start_idx, end_idx))
-            out_str.flush()
+            # out_str.write('start: %d | end: %d \r' %(start_idx, end_idx))
+            # out_str.flush()
 
-            create_pred_file(start_idx, end_idx, out, result_path, inv_cate1)
+            # create_pred_file(start_idx, end_idx, out, result_path, inv_cate1)
+        print('Step [%d/%d] | Loss: %.4f | Acc: %.4f | cate1: %.4f | cate2: %.4f | cate3: %.4f | cate4: %.4f'
+              % (i + 1, len(dataloader), valid_loss / (i + 1), valid_acc / (i + 1), acc1 / (i + 1), acc2 / (i + 1),
+                 acc3 / (i + 1), acc4 / (i + 1)))
 
     valid_loss /= (i+1)
     return valid_loss

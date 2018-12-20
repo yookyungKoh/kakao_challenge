@@ -48,7 +48,7 @@ class TextOnlyLSTM(nn.Module):
             nn.Linear(self.hidden_size, cate4_size)
         )
 
-    def forward(self, inputs, cates):
+    def forward(self, inputs, cates, val=False):
         # inputs: (words, frequency)
         word_idx = inputs[0].type(torch.LongTensor).to(device)  # (N, max_len)
         freq = inputs[1].type(torch.FloatTensor).to(device)  # (N, max_len)
@@ -56,20 +56,36 @@ class TextOnlyLSTM(nn.Module):
         text_feature = torch.bmm(word_embed.permute(0, 2, 1), freq.unsqueeze(2))  # (N, emb_size, max_len) b* (N, max_len, 1) -> (N, 128,1)
         h1 = text_feature.squeeze()  # (N, 128)
 
-        bcate, mcate, scate, _ = [cate.argmax(dim=1).long() for cate in cates]  # (N,1), (N,1), (N,1), _ = (N,4)
-        bcate_embd = self.bcate_embd(bcate)  # (N, 1, emb_size)
-        mcate_embd = self.mcate_embd(mcate)
-        scate_embd = self.scate_embd(scate)
+        if val:
+            h1, cell = self.lstm(h1.unsqueeze(1))
+            out1 = self.bcate_linear(h1).squeeze()  # (N, 57)
+            bcate_embd = self.bcate_embd(out1.argmax(dim=1))
 
-        embeddings = torch.cat((h1.unsqueeze(1), bcate_embd.unsqueeze(1), mcate_embd.unsqueeze(1), scate_embd.unsqueeze(1)), 1)  # (N, 4, emb_size=128)
+            h2, cell = self.lstm(bcate_embd.unsqueeze(1), cell)
+            out2 = self.mcate_linear(h2).squeeze()
+            mcate_embd = self.mcate_embd(out2.argmax(dim=1))
 
-        hiddens, _ = self.lstm(embeddings)
+            h3, cell = self.lstm(mcate_embd.unsqueeze(1), cell)
+            out3 = self.scate_linear(h3).squeeze()
+            scate_embd = self.scate_embd(out3.argmax(dim=1))
 
-        h1, h2, h3, h4 = [hiddens[:, time_step].squeeze() for time_step in range(4)]
-        out1 = self.bcate_linear(h1)  # (N, 57)
-        out2 = self.mcate_linear(h2)  # (N, 552)
-        out3 = self.scate_linear(h3)  # (N, 3190)
-        out4 = self.dcate_linear(h4)  # (N, 404)
+            h4, cell = self.lstm(scate_embd.unsqueeze(1), cell)
+            out4 = self.dcate_linear(h4).squeeze()
+
+        else:
+            bcate, mcate, scate, _ = [cate.argmax(dim=1).long() for cate in cates]  # (N,1), (N,1), (N,1), _ = (N,4)
+            bcate_embd = self.bcate_embd(bcate)  # (N, 1, emb_size)
+            mcate_embd = self.mcate_embd(mcate)
+            scate_embd = self.scate_embd(scate)
+            embeddings = torch.cat(
+                (h1.unsqueeze(1), bcate_embd.unsqueeze(1), mcate_embd.unsqueeze(1), scate_embd.unsqueeze(1)),
+                1)  # (N, 4, emb_size=128)
+            hiddens, _ = self.lstm(embeddings)
+            h1, h2, h3, h4 = [hiddens[:, time_step].squeeze() for time_step in range(4)]
+            out1 = self.bcate_linear(h1)  # (N, 57)
+            out2 = self.mcate_linear(h2)  # (N, 552)
+            out3 = self.scate_linear(h3)  # (N, 3190)
+            out4 = self.dcate_linear(h4)  # (N, 404)
 
         out = torch.cat((out1, out2, out3, out4), dim=1)  # (N, 4203)
 
