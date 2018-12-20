@@ -216,6 +216,7 @@ class Data:
         for cate, cate_len in zip(Y, self.cate_len):
             Y_cate.append(to_categorical(cate, cate_len))
 
+        img_feat = h['img_feat'][i]
         product = h['product'][i]
         if six.PY3:
             product = product.decode('utf-8')
@@ -239,10 +240,11 @@ class Data:
         for i in range(len(xv)):
             x[i] = xv[i][0]
             v[i] = xv[i][1]
-        return Y_cate, (x, v)
+        return Y_cate, (x, v, img_feat)
 
     def create_dataset(self, g, size, cate_classes):
         shape = (size, opt.max_len)
+        g.create_dataset('img_feat', (size, 2048), chunks=True, dtype=np.float32)
         g.create_dataset('uni', shape, chunks=True, dtype=np.int32)
         g.create_dataset('w_uni', shape, chunks=True, dtype=np.float32)
         g.create_dataset('bcate', (size, cate_classes[0]), chunks=True, dtype=np.int32)
@@ -254,6 +256,7 @@ class Data:
     def init_chunk(self, chunk_size, cate_classes):
         chunk_shape = (chunk_size, opt.max_len)
         chunk = {}
+        chunk['img_feat'] = np.zeros(shape=(chunk_size, 2048), dtype=np.float32)
         chunk['uni'] = np.zeros(shape=chunk_shape, dtype=np.int32)
         chunk['w_uni'] = np.zeros(shape=chunk_shape, dtype=np.float32)
         chunk['bcate'] = np.zeros(shape=(chunk_size, cate_classes[0]), dtype=np.int32)
@@ -266,6 +269,7 @@ class Data:
 
     def copy_chunk(self, dataset, chunk, offset, with_pid_field=False):
         num = chunk['num']
+        dataset['img_feat'][offset:offset + num, :] = chunk['img_feat'][:num]
         dataset['uni'][offset:offset + num, :] = chunk['uni'][:num]
         dataset['w_uni'][offset:offset + num, :] = chunk['w_uni'][:num]
         dataset['bcate'][offset:offset + num] = chunk['bcate'][:num]
@@ -350,10 +354,10 @@ class Data:
             self.logger.info('processing %s ...' % path)
             data = list(enumerate(cPickle.loads(open(path, 'rb').read())))
             np.random.shuffle(data)
-            for data_idx, (pid, y, vw) in data:
+            for data_idx, (pid, y, vwi) in data:
                 if y is None:
                     continue
-                v, w = vw
+                v, w, img = vwi
                 is_train = train_indices[sample_idx + data_idx]
                 if all_dev:
                     is_train = False
@@ -363,6 +367,7 @@ class Data:
                     continue
                 c = chunk['train'] if is_train else chunk['dev']
                 idx = c['num']
+                c['img_feat'][idx] = img
                 c['uni'][idx] = v
                 c['w_uni'][idx] = w
                 c['bcate'][idx] = y[0]
@@ -389,6 +394,7 @@ class Data:
             ds = dataset[div]
             size = num_samples[div]
             shape = (size, opt.max_len)
+            ds['img_feat'].resize((size, 2048))
             ds['uni'].resize(shape)
             ds['w_uni'].resize(shape)
             ds['bcate'].resize((size, self.cate_len[0]))
