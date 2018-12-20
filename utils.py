@@ -20,6 +20,7 @@ class KakaoDataset(Dataset):
         self.m_chunk = self.data_ptr[3][self.begin_offset:self.end_offset]
         self.s_chunk = self.data_ptr[4][self.begin_offset:self.end_offset]
         self.d_chunk = self.data_ptr[5][self.begin_offset:self.end_offset]
+        self.i_chunk = self.data_ptr[6][self.begin_offset:self.end_offset]
         self.total = len(self.data_ptr[0])
 
     def __len__(self):
@@ -36,8 +37,9 @@ class KakaoDataset(Dataset):
             self.m_chunk = self.data_ptr[3][self.begin_offset:self.end_offset]
             self.s_chunk = self.data_ptr[4][self.begin_offset:self.end_offset]
             self.d_chunk = self.data_ptr[5][self.begin_offset:self.end_offset]
+            self.i_chunk = self.data_ptr[6][self.begin_offset:self.end_offset]
         idx = idx - self.begin_offset
-        X = list((self.t_chunk[idx], self.f_chunk[idx]))
+        X = list((self.t_chunk[idx], self.f_chunk[idx], self.i_chunk[idx]))
         y = list((self.b_chunk[idx], self.m_chunk[idx], self.s_chunk[idx], self.d_chunk[idx]))
 
         if idx + self.begin_offset + 1 >= self.total:
@@ -64,6 +66,7 @@ class KakaoDataset(Dataset):
         mcate = data['mcate']
         scate = data['scate']
         dcate = data['dcate']
+        img = data['img_feat']
 
-        return text, freq, bcate, mcate, scate, dcate
+        return text, freq, bcate, mcate, scate, dcate, img
 
