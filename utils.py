@@ -2,6 +2,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import os
 import h5py
+import pickle
+import numpy as np
 
 class KakaoDataset(Dataset):
     def __init__(self, data_root, div, chunk_size=20000):
@@ -13,7 +15,6 @@ class KakaoDataset(Dataset):
         self.begin_offset = 0
         self.end_offset = self.begin_offset + chunk_size
         self.data_ptr = self._read_data(self.data)
-#        self.p = chunk[0]
         self.t_chunk = self.data_ptr[0][self.begin_offset:self.end_offset]
         self.f_chunk = self.data_ptr[1][self.begin_offset:self.end_offset]
         self.b_chunk = self.data_ptr[2][self.begin_offset:self.end_offset]
@@ -22,6 +23,10 @@ class KakaoDataset(Dataset):
         self.d_chunk = self.data_ptr[5][self.begin_offset:self.end_offset]
         self.i_chunk = self.data_ptr[6][self.begin_offset:self.end_offset]
         self.total = len(self.data_ptr[0])
+        meta_path = os.path.join(data_root, 'meta')
+        with open(meta_path, 'rb') as f:
+            meta = pickle.load(f)
+        self.y_vocab = meta['y_vocab']
 
     def __len__(self):
         return self.total
@@ -40,12 +45,23 @@ class KakaoDataset(Dataset):
             self.i_chunk = self.data_ptr[6][self.begin_offset:self.end_offset]
         idx = idx - self.begin_offset
         X = list((self.t_chunk[idx], self.f_chunk[idx], self.i_chunk[idx]))
-        y = list((self.b_chunk[idx], self.m_chunk[idx], self.s_chunk[idx], self.d_chunk[idx]))
-
+        y_cate = '{}>{}>{}>{}'.format(*self.global_onehot(self.b_chunk[idx], self.m_chunk[idx], self.s_chunk[idx], self.d_chunk[idx]))
+        y = self.y_vocab[y_cate]
         if idx + self.begin_offset + 1 >= self.total:
             self.__init__(self.data_root, self.div, self.chunk_size)
 
         return X, y
+
+    def global_onehot(self, b,m,s,d):
+        b_i = np.argmax(b)+1
+        m_i = np.argmax(m)+1
+        s_i = np.argmax(s)+1
+        d_i = np.argmax(d)+1
+        if s_i == 1:
+            s_i = -1
+        if d_i == 1:
+            d_i = -1
+        return b_i, m_i, s_i, d_i
 
     def is_range(self, i):
         if self.begin_offset is not None and i < self.begin_offset:
@@ -70,3 +86,15 @@ class KakaoDataset(Dataset):
 
         return text, freq, bcate, mcate, scate, dcate, img
 
+
+class KakaoDataFast(Dataset):
+    def __init__(self, text, img, label):
+        self.text = text
+        self.img = img
+        self.label = label
+
+    def __len__(self):
+        return len(self.text)
+
+    def __getitem__(self, idx):
+        return self.text[idx], self.img[idx], self.label[idx]

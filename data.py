@@ -226,8 +226,6 @@ class Data:
                  if len(w) >= opt.min_word_length and len(w) < opt.max_word_length]
         if not words:
             return [None] * 2
-#        bigrams = [' '.join([words[idx], words[idx + 1]]) for idx in range(len(words) - 1)]
-#        words += bigrams
         chars = itertools.chain(*[list(w) for w in words])
         words += chars
 

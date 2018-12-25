@@ -25,10 +25,17 @@ import six
 
 from keras.models import load_model
 from keras.callbacks import ModelCheckpoint
+from keras.utils.np_utils import to_categorical
 from six.moves import zip, cPickle
 
 from misc import get_logger, Option
 from network import TextOnly, top1_acc
+import tensorflow as tf
+from keras.backend.tensorflow_backend import set_session
+
+config = tf.ConfigProto(allow_soft_placement=True)
+config.gpu_options.allow_growth = True
+set_session(tf.Session(config=config))
 
 opt = Option('./config.json')
 if six.PY2:
@@ -42,13 +49,35 @@ class Classifier():
     def __init__(self):
         self.logger = get_logger('Classifier')
         self.num_classes = 0
+        self.y_vocab = None
+
+    def load_y_vocab(self, data_root):
+        meta_path = os.path.join(data_root, 'meta')
+        meta = cPickle.loads(open(meta_path, 'rb').read())
+        self.y_vocab = meta['y_vocab']
 
     def get_sample_generator(self, ds, batch_size, raise_stop_event=False):
         left, limit = 0, ds['uni'].shape[0]
         while True:
             right = min(left + batch_size, limit)
-            X = [ds[t][left:right, :] for t in ['uni', 'w_uni']]
-            Y = ds['cate'][left:right]
+            X = [ds[t][left:right, :] for t in ['uni', 'w_uni', 'img_feat']]
+            # Y = ds['cate'][left:right]
+            bcate = ds['bcate'][left:right].argmax(axis=1) + 1
+            mcate = ds['mcate'][left:right].argmax(axis=1) + 1
+            scate = ds['scate'][left:right].argmax(axis=1) + 1
+            dcate = ds['dcate'][left:right].argmax(axis=1) + 1
+            cate_classes = []
+            for b, m, s, d in zip(bcate, mcate, scate, dcate):
+                if s == 1:
+                    s = -1
+                if d == 1:
+                    d = -1
+                cate_classes.append(f'{b}>{m}>{s}>{d}')
+            Y = []
+            for cate_class in cate_classes:
+                onehot_cate_class = to_categorical(self.y_vocab[cate_class], len(self.y_vocab))
+                Y.append(onehot_cate_class)
+            Y = np.array(Y)
             yield X, Y
             left = right
             if right == limit:
@@ -99,10 +128,11 @@ class Classifier():
                 fout.write('\n')
 
     def predict(self, data_root, model_root, test_root, test_div, out_path, readable=False):
+        self.load_y_vocab(data_root)
         meta_path = os.path.join(data_root, 'meta')
         meta = cPickle.loads(open(meta_path, 'rb').read())
 
-        model_fname = os.path.join(model_root, 'model.h5')
+        model_fname = os.path.join(model_root, 'weights')
         self.logger.info('# of classes(train): %s' % len(meta['y_vocab']))
         model = load_model(model_fname,
                            custom_objects={'top1_acc': top1_acc})
@@ -125,6 +155,7 @@ class Classifier():
         self.write_prediction_result(test, pred_y, meta, out_path, readable=readable)
 
     def train(self, data_root, out_dir):
+        self.load_y_vocab(data_root)
         data_path = os.path.join(data_root, 'data.h5py')
         meta_path = os.path.join(data_root, 'meta')
         data = h5py.File(data_path, 'r')
@@ -140,8 +171,8 @@ class Classifier():
         train = data['train']
         dev = data['dev']
 
-        self.logger.info('# of train samples: %s' % train['cate'].shape[0])
-        self.logger.info('# of dev samples: %s' % dev['cate'].shape[0])
+        self.logger.info('# of train samples: %s' % train['bcate'].shape[0])
+        self.logger.info('# of dev samples: %s' % dev['bcate'].shape[0])
 
         checkpoint = ModelCheckpoint(self.weight_fname, monitor='val_loss',
                                      save_best_only=True, mode='min', period=10)
@@ -167,7 +198,7 @@ class Classifier():
                             shuffle=True,
                             callbacks=[checkpoint])
 
-        model.load_weights(self.weight_fname) # loads from checkout point if exists
+        model.load_weights(self.weight_fname)  # loads from checkout point if exists
         open(self.model_fname + '.json', 'w').write(model.to_json())
         model.save(self.model_fname + '.h5')
 

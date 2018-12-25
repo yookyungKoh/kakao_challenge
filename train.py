@@ -8,8 +8,10 @@ import sys
 import h5py
 import json
 import six
+import pickle
 
-from mlp_model import MLP, HMCN, make_layer
+# from mlp_model import MLP, HMCN, make_layer
+from lstm_model import MLP
 from utils import KakaoDataset
 from misc import Option, get_logger
 
@@ -28,6 +30,7 @@ inv_cate1 = get_inverted_cate1(cate1)
 
 load_time = time.time()
 data_root = './data/'
+meta_path = os.path.join(data_root, 'train/meta')
 train_path = os.path.join(data_root, 'train/')
 dev_path = os.path.join(data_root, 'dev/')
 
@@ -65,7 +68,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # model
-    model = HMCN(opt).to(device)
+    model = MLP(opt, meta_path).to(device)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.9, 0.999))
     num_params = sum([p.numel() for p in model.parameters()])
@@ -76,7 +79,6 @@ def main():
 
     best_loss = 100000.
     for epoch in range(opt.num_epochs):
-        epoch += 15
         train(opt, train_loader, model, criterion, optimizer, epoch) 
         val_loss = evaluate(opt, valid_loader, model, criterion, make_file=False)
 
@@ -91,60 +93,50 @@ def main():
     model.load_state_dict(torch.load(best_model_path))
     dev_loss = evaluate(opt, dev_loader, model, criterion, make_file=True)
 
-    pid_order = []
-    h = h5py.File('./data/dev/data.h5py', 'r')['dev']
-    pid_order.extend(h['pid'][::])
-    no_ans = '{pid}\t-1\t-1\t-1\t-1'
-    with open(result_path, 'r') as f:
-        file_len = len(f.readlines())
-        print('total prediction length:', file_len)
-    with open(result_path, 'a') as f:
-        pid_none = pid_order[file_len:]
-        for pid in pid_none:
-            f.write(no_ans.format(pid=pid))
-            f.write('\n')
-    print('created file at %s'%(result_path))
+
+def one_hot_embedding(labels, num_classes):
+    """Embedding labels to one-hot form.
+
+    Args:
+      labels: (LongTensor) class labels, sized [N,].
+      num_classes: (int) number of classes.
+
+    Returns:
+      (tensor) encoded labels, sized [N, #classes].
+    """
+    y = torch.eye(num_classes)
+    return y[labels]
+
 
 def train(opt, dataloader, model, criterion, optimizer, epoch, beta=0.5):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     start_time = time.time()
-
+    with open(meta_path, 'rb') as f:
+        meta = pickle.load(f)
+    y_vocab = meta['y_vocab']
     model.train()
     train_loss = 0.
-    acc1, acc2, acc3, acc4 = 0., 0., 0., 0.
+    acc = 0.
     train_score = 0.
 
     for i, (inputs, targets) in enumerate(dataloader):
-        targets = [t.type(torch.FloatTensor).to(device) for t in targets]
-        g_targets = torch.cat((targets[0], targets[1], targets[2], targets[3]), dim=1)
+        targets = one_hot_embedding(targets.long(), len(y_vocab))
+        targets = targets.float().to(device)
 
         out = model(inputs)
-        g_out = out[4]
-        l_out = torch.cat((out[0], out[1], out[2], out[3]), dim=1)
-        f_out = beta * g_out + (1-beta) * l_out
+        loss = criterion(out, targets)
+        train_loss += loss.item()
 
-        bloss = criterion(out[0], targets[0])
-        mloss = criterion(out[1], targets[1])
-        sloss = criterion(out[2], targets[2])
-        dloss = criterion(out[3], targets[3])    
-        l_loss = bloss + mloss + sloss + dloss
-        g_loss = criterion(g_out, g_targets)
-
-        total_loss = l_loss + g_loss
-        train_loss += total_loss.item()
-        
-        acc1 += get_acc(f_out[:,0:57], targets[0]).item()
-        acc2 += get_acc(f_out[:,57:57+552], targets[1]).item()
-        acc3 += get_acc(f_out[:,57+552:57+552+3190], targets[2]).item()
-        acc4 += get_acc(f_out[:,57+552+3190:], targets[3]).item()
-        train_score += get_score(acc1, acc2, acc3, acc4, i)
+        predict_ = torch.argmax(out, dim=1)
+        targets_ = torch.argmax(targets, dim=1)
+        acc += (predict_ == targets_).sum() / len(predict_)
 
         model.zero_grad()
-        total_loss.backward()
+        loss.backward()
         optimizer.step()
 
-        out_str.write('Epoch [%d/%d] | Step [%d/%d] | Loss: %.4f e-4 | Score: %.4f | b: %.4f | m: %.4f | s: %.4f | d: %.4f \r' 
-                    %(epoch+1, opt.num_epochs, i+1, len(dataloader), train_loss*1e4/(i+1), train_score/(i+1), acc1/(i+1), acc2/(i+1), acc3/(i+1), acc4/(i+1)))
+        out_str.write('Epoch [%d/%d] | Step [%d/%d] | Loss: %.4f e-4 | acc: %.4f \r'
+                    %(epoch+1, opt.num_epochs, i+1, len(dataloader), train_loss*1e4/(i+1), acc/(i+1)))
         out_str.flush()
 
     print('Training time: %.2f'%((time.time()-start_time)/ 60))
@@ -152,46 +144,36 @@ def train(opt, dataloader, model, criterion, optimizer, epoch, beta=0.5):
 def evaluate(opt, dataloader, model, criterion, make_file=False, beta=0.5):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     valid_loss = 0.
-    acc1, acc2, acc3, acc4 = 0., 0., 0., 0.
+    acc = 0.
     valid_score = 0.
+    with open(meta_path, 'rb') as f:
+        meta = pickle.load(f)
+    y_vocab = meta['y_vocab']
     with torch.no_grad():
         idx = 0
         for i, (inputs, targets) in enumerate(dataloader):
             start_idx = idx
             end_idx = start_idx + len(inputs[0])
-            targets = [t.type(torch.FloatTensor).to(device) for t in targets]
-            g_targets = torch.cat((targets[0], targets[1], targets[2], targets[3]), dim=1)
+            targets = one_hot_embedding(targets.long(), len(y_vocab))
+            targets = targets.float().to(device)
 
             out = model(inputs)
-            g_out = out[4]
-            l_out = torch.cat((out[0], out[1], out[2], out[3]), dim=1)
-            f_out = beta * g_out + (1-beta) * l_out
+            loss = criterion(out, targets)
+            valid_loss += loss.item()
+            predict_ = torch.argmax(out, dim=1)
+            targets_ = torch.argmax(targets, dim=1)
+            acc += (predict_ == targets_).sum() / len(predict_)
 
-            bloss = criterion(out[0], targets[0])
-            mloss = criterion(out[1], targets[1])
-            sloss = criterion(out[2], targets[2])
-            dloss = criterion(out[3], targets[3])
-            l_loss = bloss + mloss + sloss + dloss
-            g_loss = criterion(g_out, g_targets)
 
-            total_loss = l_loss + g_loss
-            valid_loss += total_loss.item()
-
-            acc1 += get_acc(f_out[:,0:57], targets[0]).item()
-            acc2 += get_acc(f_out[:,57:57+552], targets[1]).item()
-            acc3 += get_acc(f_out[:,57+552:57+552+3190], targets[2]).item()
-            acc4 += get_acc(f_out[:,57+552+3190:], targets[3]).item()
-            valid_score += get_score(acc1, acc2, acc3, acc4, i)
-
-            out_str.write('Step [%d/%d] | Loss: %.4f e-4 | Score: %.4f | b: %.4f | m: %.4f | s: %.4f | d: %.4f \r'
-                        %(i+1, len(dataloader), valid_loss*1e4/(i+1), valid_score/(i+1), acc1/(i+1), acc2/(i+1), acc3/(i+1), acc4/(i+1)))
+            out_str.write('Step [%d/%d] | Loss: %.4f e-4 | acc: %.4f \r'
+                        %(i+1, len(dataloader), valid_loss*1e4/(i+1), acc/(i+1)))
             out_str.flush()
 
-            if make_file:
-                idx = end_idx
-                out_str.write('start: %d | end: %d \r' %(start_idx, end_idx))
-                out_str.flush()
-                create_pred_file(dev_path, start_idx, end_idx, f_out, result_path, inv_cate1)
+            # if make_file:
+            #     idx = end_idx
+            #     out_str.write('start: %d | end: %d \r' %(start_idx, end_idx))
+            #     out_str.flush()
+            #     create_pred_file(dev_path, start_idx, end_idx, f_out, result_path, inv_cate1)
     valid_loss /= (i+1)
     return valid_loss
 
