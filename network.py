@@ -15,13 +15,14 @@
 
 import tensorflow as tf
 import keras
+import keras.backend as K
 from keras.models import Model
 from keras.layers.merge import dot
-from keras.layers import Dense, Input
+from keras.layers import Dense, Input, Activation, Lambda, concatenate
 from keras.layers.core import Reshape
 
 from keras.layers.embeddings import Embedding
-from keras.layers.core import Dropout, Activation
+from keras.layers.core import Dropout
 
 from misc import get_logger, Option
 opt = Option('./config.json')
@@ -42,45 +43,39 @@ class TextOnly:
         with tf.device('/gpu:0'):
             embd = Embedding(voca_size,
                              opt.embd_size,
-                             name='uni_embd')
-            cate1_embed = Embedding(57, 10)
-            cate2_embed = Embedding(552, 10)
-            cate3_embed = Embedding(3190, 10)
+                             name='text_embd')
             
-            t_uni = Input((max_len,), name="input_1")
-            t_uni_embd = embd(t_uni)  # token
-            print('embedded input:', t_unit_embd.shape)
+            text = Input((max_len,), name="text")
+            text_embed = embd(text)  # (L, 128)
+            t_input = K.permute_dimensions(text_embed, (0,2,1)) #(128, L)
+            img = Input((2048,), name="image")
+            img_feat = Reshape((2048, 1))(img)  # img feature (2048,1)
 
-            w_uni = Input((max_len,), name="input_2")
-            w_uni_mat = Reshape((max_len, 1))(w_uni)  # weight
-
-            uni_embd_mat = dot([t_uni_embd, w_uni_mat], axes=1) # dot product (x, w) --> weighted token embedding
-            uni_embd = Reshape((opt.embd_size, ))(uni_embd_mat)
+            alpha_b = Dense(1, activation='softmax')(text_embed) #(L, 1)
+            alpha_b = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))(alpha_b)
+            context_b = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1,2]))([text_embed, alpha_b])
             
-            embd_out = Dropout(rate=0.5)(uni_embd)
-            relu = Activation('relu', name='relu1')(embd_out)
-            print('after relu1:', relu.shape)
+            alpha_m = Dense(1, activation='softmax')(text_embed)
+            alpha_m = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))(alpha_m)
+            context_m = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1,2]))([text_embed, alpha_m])
 
-            out1 = Dense(57, activation=activation)(relu)
-            # cate1
-            y1 = cate1_embed(argmax(out1))
+            alpha_s = Dense(1, activation='softmax')(text_embed)
+            alpha_s = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))(alpha_s)
+            context_s = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1,2]))([text_embed, alpha_s])
 
-            print('cate1 hidden:', relu.shape)
-            print('concat with y1:', keras.backend.stack(relu, out1).shape)
-            
-            h1 = keras.backend.stack(relu, out1)
-            out2 = Dense(552, activation=activation)(h1)
-            y2 = cate2_embed(keras.backend.argmax(out2))
-            h2 = keras.backend.stack(h1, out2)
-            out3 = Dense(3190, activation=activation)(h2)
-            y3 = cate3_embed(keras.backend.argmax(out3))
-            h3 = keras.backend.stack(h2, out3)
-            out4 = Dense(404, activation=activation)(h3)
+            alpha_d = Dense(1, activation='softmax')(text_embed)
+            alpha_d = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))(alpha_d)
+            context_d = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1,2]))([text_embed, alpha_d])
 
-            model = Model(inputs=[t_uni, w_uni], outputs=outputs)
-            optm = keras.optimizers.Nadam(opt.lr)
+            h1 = concatenate([context_b, context_m, context_s, context_d, img_feat], axis=1)
+            h1 = Reshape((2560,))(h1)
+            outputs = Dense(num_classes, activation=activation)(h1) 
+
+            model = Model(inputs=[text, img], outputs=outputs)
+            optm = keras.optimizers.Adam(opt.lr)
             model.compile(loss='binary_crossentropy',
                         optimizer=optm,
                         metrics=[top1_acc])
             model.summary(print_fn=lambda x: self.logger.info(x))
+
         return model
