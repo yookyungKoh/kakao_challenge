@@ -47,7 +47,7 @@ class Classifier():
         left, limit = 0, ds['uni'].shape[0]
         while True:
             right = min(left + batch_size, limit)
-            X = [ds[t][left:right, :] for t in ['uni', 'w_uni']]
+            X = [ds[t][left:right, :] for t in ['uni', 'img_feat']]
             Y = ds['cate'][left:right]
             yield X, Y
             left = right
@@ -102,7 +102,7 @@ class Classifier():
         meta_path = os.path.join(data_root, 'meta')
         meta = cPickle.loads(open(meta_path, 'rb').read())
 
-        model_fname = os.path.join(model_root, 'model.h5')
+        model_fname = os.path.join(model_root, 'weights')
         self.logger.info('# of classes(train): %s' % len(meta['y_vocab']))
         model = load_model(model_fname,
                            custom_objects={'top1_acc': top1_acc})
