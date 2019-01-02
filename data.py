@@ -136,7 +136,7 @@ class Data:
 
     def __init__(self):
         self.logger = get_logger('data')
-        self.cate_len = [57, 552, 3190, 404]
+#        self.cate_len = [57, 552, 3190, 404]
 
     def load_y_vocab(self):
         self.y_vocab = cPickle.loads(open(self.y_vocab_path, 'rb').read())
@@ -187,8 +187,7 @@ class Data:
     def _preprocessing(self, cls, data_path_list, div, chunk_size):
         chunk_offsets = self._split_data(data_path_list, div, chunk_size)
         num_chunks = len(chunk_offsets)
-        self.logger.info('split data into %d chunks, # of classes=%s>%s>%s>%s' % (
-            num_chunks, self.cate_len[0], self.cate_len[1], self.cate_len[2], self.cate_len[3]))
+        self.logger.info('split data into %d chunks, # of classes=%s' % (num_chunks, len(self.y_vocab)))
         pool = Pool(opt.num_workers)
         try:
             pool.map_async(preprocessing, [(cls,
@@ -207,62 +206,94 @@ class Data:
         return num_chunks
 
     def parse_data(self, label, h, i):
-        Y = [abs(int(cate)) - 1 for cate in label.split('>')]
+        Y = self.y_vocab.get(label)
+#        Y = [abs(int(cate)) - 1 for cate in label.split('>')]
         if Y is None and self.div in ['dev', 'test']:
-            Y = [0] * 4
+            Y = 0
         if Y is None and self.div != 'test':
             return [None] * 2
-        Y_cate = []
-        for cate, cate_len in zip(Y, self.cate_len):
-            Y_cate.append(to_categorical(cate, cate_len))
+#        Y_cate = []
+#        for cate, cate_len in zip(Y, self.cate_len):
+#            Y_cate.append(to_categorical(cate, cate_len))
+        Y = to_categorical(Y, len(self.y_vocab))
 
         img_feat = h['img_feat'][i]
         product = h['product'][i]
+        brand = h['brand'][i]
+        maker = h['maker'][i]
+        price = h['price'][i]
+
         if six.PY3:
             product = product.decode('utf-8')
+            brand = brand.decode('utf-8')
+            maker = maker.decode('utf-8')
         product = re_sc.sub(' ', product).strip().split()
+        brand = re_sc.sub(' ', brand).strip().split()
+        maker = re_sc.sub(' ', maker).strip().split()
+        brand_words = [w.strip() for w in brand]
+        maker_words = [w.strip() for w in maker]
         words = [w.strip() for w in product]
         words = [w for w in words
                  if len(w) >= opt.min_word_length and len(w) < opt.max_word_length]
+        brand_words = [w for w in brand_words if len(w)>=1 and len(w) < 15]
+        maker_words = [w for w in maker_words if len(w)>=1 and len(w) < 10]
         if not words:
             return [None] * 2
-#        bigrams = [' '.join([words[idx], words[idx + 1]]) for idx in range(len(words) - 1)]
-#        words += bigrams
         chars = itertools.chain(*[list(w) for w in words])
         words += chars
 
         hash_func = hash if six.PY2 else lambda x: mmh3.hash(x, seed=17)
         x = [hash_func(w) % opt.unigram_hash_size + 1 for w in words]
         xv = Counter(x).most_common(opt.max_len)
+        br = [hash_func(w) % opt.unigram_hash_size + 1 for w in brand_words]
+        mk = [hash_func(w) % opt.unigram_hash_size + 1 for w in maker_words]
+        brv = Counter(br).most_common(opt.max_len_b)
+        mkv = Counter(mk).most_common(opt.max_len_m) 
 
         x = np.zeros(opt.max_len, dtype=np.float32)
         v = np.zeros(opt.max_len, dtype=np.int32)
         for i in range(len(xv)):
             x[i] = xv[i][0]
             v[i] = xv[i][1]
-        return Y_cate, (x, v, img_feat)
 
-    def create_dataset(self, g, size, cate_classes):
+        b = np.zeros(opt.max_len_b, dtype=np.float32)
+        m = np.zeros(opt.max_len_m, dtype=np.float32)
+        for i in range(len(brv)):
+            b[i] = brv[i][0]
+        for i in range(len(mkv)):
+            m[i] = mkv[i][0]
+
+        return Y, (x, v, img_feat, b, m, price)
+
+    def create_dataset(self, g, size, num_classes):
         shape = (size, opt.max_len)
         g.create_dataset('img_feat', (size, 2048), chunks=True, dtype=np.float32)
         g.create_dataset('uni', shape, chunks=True, dtype=np.int32)
         g.create_dataset('w_uni', shape, chunks=True, dtype=np.float32)
-        g.create_dataset('bcate', (size, cate_classes[0]), chunks=True, dtype=np.int32)
-        g.create_dataset('mcate', (size, cate_classes[1]), chunks=True, dtype=np.int32)
-        g.create_dataset('scate', (size, cate_classes[2]), chunks=True, dtype=np.int32)
-        g.create_dataset('dcate', (size, cate_classes[3]), chunks=True, dtype=np.int32)
+        g.create_dataset('cate', (size, num_classes), chunks=True, dtype=np.int32)
+        g.create_dataset('brand', (size, opt.max_len_b), chunks=True, dtype=np.int32)
+        g.create_dataset('maker', (size, opt.max_len_m), chunks=True, dtype=np.int32)
+        g.create_dataset('price', (size, 1), chunks=True, dtype=np.int32)
+#        g.create_dataset('bcate', (size, cate_classes[0]), chunks=True, dtype=np.int32)
+#        g.create_dataset('mcate', (size, cate_classes[1]), chunks=True, dtype=np.int32)
+#        g.create_dataset('scate', (size, cate_classes[2]), chunks=True, dtype=np.int32)
+#        g.create_dataset('dcate', (size, cate_classes[3]), chunks=True, dtype=np.int32)
         g.create_dataset('pid', (size,), chunks=True, dtype='S12')
 
-    def init_chunk(self, chunk_size, cate_classes):
+    def init_chunk(self, chunk_size, num_classes):
         chunk_shape = (chunk_size, opt.max_len)
         chunk = {}
         chunk['img_feat'] = np.zeros(shape=(chunk_size, 2048), dtype=np.float32)
         chunk['uni'] = np.zeros(shape=chunk_shape, dtype=np.int32)
         chunk['w_uni'] = np.zeros(shape=chunk_shape, dtype=np.float32)
-        chunk['bcate'] = np.zeros(shape=(chunk_size, cate_classes[0]), dtype=np.int32)
-        chunk['mcate'] = np.zeros(shape=(chunk_size, cate_classes[1]), dtype=np.int32)
-        chunk['scate'] = np.zeros(shape=(chunk_size, cate_classes[2]), dtype=np.int32)
-        chunk['dcate'] = np.zeros(shape=(chunk_size, cate_classes[3]), dtype=np.int32)
+        chunk['cate'] = np.zeros(shape=(chunk_size, num_classes), dtype=np.int32)
+        chunk['brand'] = np.zeros(shape=(chunk_size, opt.max_len_b), dtype=np.int32)
+        chunk['maker'] = np.zeros(shape=(chunk_size, opt.max_len_m), dtype=np.int32)
+        chunk['price'] = np.zeros(shape=(chunk_size, 1), dtype=np.int32)
+#        chunk['bcate'] = np.zeros(shape=(chunk_size, cate_classes[0]), dtype=np.int32)
+#        chunk['mcate'] = np.zeros(shape=(chunk_size, cate_classes[1]), dtype=np.int32)
+#        chunk['scate'] = np.zeros(shape=(chunk_size, cate_classes[2]), dtype=np.int32)
+#        chunk['dcate'] = np.zeros(shape=(chunk_size, cate_classes[3]), dtype=np.int32)
         chunk['pid'] = []
         chunk['num'] = 0
         return chunk
@@ -272,10 +303,14 @@ class Data:
         dataset['img_feat'][offset:offset + num, :] = chunk['img_feat'][:num]
         dataset['uni'][offset:offset + num, :] = chunk['uni'][:num]
         dataset['w_uni'][offset:offset + num, :] = chunk['w_uni'][:num]
-        dataset['bcate'][offset:offset + num] = chunk['bcate'][:num]
-        dataset['mcate'][offset:offset + num] = chunk['mcate'][:num]
-        dataset['scate'][offset:offset + num] = chunk['scate'][:num]
-        dataset['dcate'][offset:offset + num] = chunk['dcate'][:num]
+        dataset['cate'][offset:offset + num] = chunk['cate'][:num]
+        dataset['brand'][offset:offset + num, :] = chunk['brand'][:num]
+        dataset['maker'][offset:offset + num, :] = chunk['maker'][:num]
+        dataset['price'][offset:offset + num, :] = chunk['price'][:num]
+#        dataset['bcate'][offset:offset + num] = chunk['bcate'][:num]
+#        dataset['mcate'][offset:offset + num] = chunk['mcate'][:num]
+#        dataset['scate'][offset:offset + num] = chunk['scate'][:num]
+#        dataset['dcate'][offset:offset + num] = chunk['dcate'][:num]
         if with_pid_field:
             dataset['pid'][offset:offset + num] = chunk['pid'][:num]
 
@@ -285,6 +320,9 @@ class Data:
         A['uni'][offset:offset + num, :] = B['uni'][:num]
         A['w_uni'][offset:offset + num, :] = B['w_uni'][:num]
         A['cate'][offset:offset + num, y_offset:y_offset + y_num] = B['cate'][:num]
+        A['brand'][offset:offset + num, :] = B['brand'][:num]
+        A['maker'][offset:offset + num, :] = B['maker'][:num]
+        A['price'][offset:offset + num, :] = B['price'][:num]
         if with_pid_field:
             A['pid'][offset:offset + num] = B['pid'][:num]
 
@@ -337,16 +375,16 @@ class Data:
 
         train = data_fout.create_group('train')
         dev = data_fout.create_group('dev')
-        self.create_dataset(train, train_size, self.cate_len)
-        self.create_dataset(dev, dev_size, self.cate_len)
+        self.create_dataset(train, train_size, len(self.y_vocab))
+        self.create_dataset(dev, dev_size, len(self.y_vocab))
         self.logger.info('train_size ~ %s, dev_size ~ %s' % (train_size, dev_size))
 
         sample_idx = 0
         dataset = {'train': train, 'dev': dev}
         num_samples = {'train': 0, 'dev': 0}
         chunk_size = opt.db_chunk_size
-        chunk = {'train': self.init_chunk(chunk_size, self.cate_len),
-                 'dev': self.init_chunk(chunk_size, self.cate_len)}
+        chunk = {'train': self.init_chunk(chunk_size, len(self.y_vocab)),
+                 'dev': self.init_chunk(chunk_size, len(self.y_vocab))}
         chunk_order = list(range(num_input_chunks))
         np.random.shuffle(chunk_order)
         for input_chunk_idx in chunk_order:
@@ -354,10 +392,10 @@ class Data:
             self.logger.info('processing %s ...' % path)
             data = list(enumerate(cPickle.loads(open(path, 'rb').read())))
             np.random.shuffle(data)
-            for data_idx, (pid, y, vwi) in data:
+            for data_idx, (pid, y, vwibmp) in data:
                 if y is None:
                     continue
-                v, w, img = vwi
+                v, w, i, b, m, p = vwibmp
                 is_train = train_indices[sample_idx + data_idx]
                 if all_dev:
                     is_train = False
@@ -365,15 +403,23 @@ class Data:
                     is_train = True
                 if v is None:
                     continue
+                if b is None:
+                    continue
+                if m is None:
+                    continue
                 c = chunk['train'] if is_train else chunk['dev']
                 idx = c['num']
-                c['img_feat'][idx] = img
+                c['img_feat'][idx] = i
                 c['uni'][idx] = v
                 c['w_uni'][idx] = w
-                c['bcate'][idx] = y[0]
-                c['mcate'][idx] = y[1]
-                c['scate'][idx] = y[2]
-                c['dcate'][idx] = y[3]
+                c['brand'][idx] = b
+                c['maker'][idx] = m
+                c['price'][idx] = p
+                c['cate'][idx] = y
+#                c['bcate'][idx] = y[0]
+#                c['mcate'][idx] = y[1]
+#                c['scate'][idx] = y[2]
+#                c['dcate'][idx] = y[3]
                 c['num'] += 1
                 if not is_train:
                     c['pid'].append(np.string_(pid))
@@ -382,7 +428,7 @@ class Data:
                         self.copy_chunk(dataset[t], chunk[t], num_samples[t],
                                         with_pid_field=t == 'dev')
                         num_samples[t] += chunk[t]['num']
-                        chunk[t] = self.init_chunk(chunk_size, self.cate_len)
+                        chunk[t] = self.init_chunk(chunk_size, len(self.y_vocab))
             sample_idx += len(data)
         for t in ['train', 'dev']:
             if chunk[t]['num'] > 0:
@@ -397,18 +443,23 @@ class Data:
             ds['img_feat'].resize((size, 2048))
             ds['uni'].resize(shape)
             ds['w_uni'].resize(shape)
-            ds['bcate'].resize((size, self.cate_len[0]))
-            ds['mcate'].resize((size, self.cate_len[1]))
-            ds['scate'].resize((size, self.cate_len[2]))
-            ds['dcate'].resize((size, self.cate_len[3]))
+            ds['cate'].resize((size, len(self.y_vocab)))
+            ds['brand'].resize((size, opt.max_len_b))
+            ds['maker'].resize((size, opt.max_len_m))
+            ds['price'].resize((size,1))
+#            ds['bcate'].resize((size, self.cate_len[0]))
+#            ds['mcate'].resize((size, self.cate_len[1]))
+#            ds['scate'].resize((size, self.cate_len[2]))
+#            ds['dcate'].resize((size, self.cate_len[3]))
 
         data_fout.close()
         meta = {'y_vocab': self.y_vocab}
         meta_fout.write(cPickle.dumps(meta, 2))
         meta_fout.close()
 
-        self.logger.info(
-            '# of classes: %s>%s>%s>%s' % (self.cate_len[0], self.cate_len[1], self.cate_len[2], self.cate_len[3]))
+#        self.logger.info(
+#            '# of classes: %s>%s>%s>%s' % (self.cate_len[0], self.cate_len[1], self.cate_len[2], self.cate_len[3]))
+        self.logger.info('# of classes: %s' % len(meta['y_vocab']))
         self.logger.info('# of samples on train: %s' % num_samples['train'])
         self.logger.info('# of samples on dev: %s' % num_samples['dev'])
         self.logger.info('data: %s' % os.path.join(output_dir, 'data.h5py'))
