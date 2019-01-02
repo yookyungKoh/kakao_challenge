@@ -233,22 +233,24 @@ class Data:
         brand_words = [w.strip() for w in brand]
         maker_words = [w.strip() for w in maker]
         words = [w.strip() for w in product]
+        chars = ' '.join(words)
+        chars = [c for c in chars]
         words = [w for w in words
                  if len(w) >= opt.min_word_length and len(w) < opt.max_word_length]
         brand_words = [w for w in brand_words if len(w)>=1 and len(w) < 15]
         maker_words = [w for w in maker_words if len(w)>=1 and len(w) < 10]
         if not words:
-            return [None] * 2
-        chars = itertools.chain(*[list(w) for w in words])
-        words += chars
+            words = [' ']
+            # return [None] * 2
+        # chars = itertools.chain(*[list(w) for w in words])
+        # words += chars
 
         hash_func = hash if six.PY2 else lambda x: mmh3.hash(x, seed=17)
         x = [hash_func(w) % opt.unigram_hash_size + 1 for w in words]
+        ch = [hash_func(c) % opt.unigram_hash_size + 1 for c in chars]
         xv = Counter(x).most_common(opt.max_len)
         br = [hash_func(w) % opt.unigram_hash_size + 1 for w in brand_words]
         mk = [hash_func(w) % opt.unigram_hash_size + 1 for w in maker_words]
-        brv = Counter(br).most_common(opt.max_len_b)
-        mkv = Counter(mk).most_common(opt.max_len_m) 
 
         x = np.zeros(opt.max_len, dtype=np.float32)
         v = np.zeros(opt.max_len, dtype=np.int32)
@@ -258,18 +260,22 @@ class Data:
 
         b = np.zeros(opt.max_len_b, dtype=np.float32)
         m = np.zeros(opt.max_len_m, dtype=np.float32)
-        for i in range(len(brv)):
-            b[i] = brv[i][0]
-        for i in range(len(mkv)):
-            m[i] = mkv[i][0]
+        for i in range(min(len(br), opt.max_len_b)):
+            b[i] = br[i]
+        for i in range(min(len(mk), opt.max_len_m)):
+            m[i] = mk[i]
+        c = np.zeros(opt.max_len_c, dtype=np.int32)
+        for i in range(min(len(ch), opt.max_len_c)):
+            c[i] = ch[i]
 
-        return Y, (x, v, img_feat, b, m, price)
+        return Y, (x, v, c, img_feat, b, m, price)
 
     def create_dataset(self, g, size, num_classes):
         shape = (size, opt.max_len)
         g.create_dataset('img_feat', (size, 2048), chunks=True, dtype=np.float32)
         g.create_dataset('uni', shape, chunks=True, dtype=np.int32)
         g.create_dataset('w_uni', shape, chunks=True, dtype=np.float32)
+        g.create_dataset('char', (size, opt.max_len_c), chunks=True, dtype=np.int32)
         g.create_dataset('cate', (size, num_classes), chunks=True, dtype=np.int32)
         g.create_dataset('brand', (size, opt.max_len_b), chunks=True, dtype=np.int32)
         g.create_dataset('maker', (size, opt.max_len_m), chunks=True, dtype=np.int32)
@@ -286,6 +292,7 @@ class Data:
         chunk['img_feat'] = np.zeros(shape=(chunk_size, 2048), dtype=np.float32)
         chunk['uni'] = np.zeros(shape=chunk_shape, dtype=np.int32)
         chunk['w_uni'] = np.zeros(shape=chunk_shape, dtype=np.float32)
+        chunk['char'] = np.zeros(shape=(chunk_size, opt.max_len_c), dtype=np.int32)
         chunk['cate'] = np.zeros(shape=(chunk_size, num_classes), dtype=np.int32)
         chunk['brand'] = np.zeros(shape=(chunk_size, opt.max_len_b), dtype=np.int32)
         chunk['maker'] = np.zeros(shape=(chunk_size, opt.max_len_m), dtype=np.int32)
@@ -303,6 +310,7 @@ class Data:
         dataset['img_feat'][offset:offset + num, :] = chunk['img_feat'][:num]
         dataset['uni'][offset:offset + num, :] = chunk['uni'][:num]
         dataset['w_uni'][offset:offset + num, :] = chunk['w_uni'][:num]
+        dataset['char'][offset:offset + num, :] = chunk['char'][:num]
         dataset['cate'][offset:offset + num] = chunk['cate'][:num]
         dataset['brand'][offset:offset + num, :] = chunk['brand'][:num]
         dataset['maker'][offset:offset + num, :] = chunk['maker'][:num]
@@ -319,6 +327,7 @@ class Data:
         y_num = B['cate'].shape[1]
         A['uni'][offset:offset + num, :] = B['uni'][:num]
         A['w_uni'][offset:offset + num, :] = B['w_uni'][:num]
+        A['char'][offset:offset + num, :] = B['char'][:num]
         A['cate'][offset:offset + num, y_offset:y_offset + y_num] = B['cate'][:num]
         A['brand'][offset:offset + num, :] = B['brand'][:num]
         A['maker'][offset:offset + num, :] = B['maker'][:num]
@@ -331,7 +340,7 @@ class Data:
         train_size = int(np.count_nonzero(train_indices))
         return train_indices, train_size
 
-    def make_db(self, data_name, output_dir='data/train', train_ratio=0.99):
+    def make_db(self, data_name, output_dir='data/train', train_ratio=0.8):
         if data_name == 'train':
             div = 'train'
             data_path_list = opt.train_data_list
@@ -392,10 +401,10 @@ class Data:
             self.logger.info('processing %s ...' % path)
             data = list(enumerate(cPickle.loads(open(path, 'rb').read())))
             np.random.shuffle(data)
-            for data_idx, (pid, y, vwibmp) in data:
+            for data_idx, (pid, y, vwcibmp) in data:
                 if y is None:
                     continue
-                v, w, i, b, m, p = vwibmp
+                v, w, ch, i, b, m, p = vwcibmp
                 is_train = train_indices[sample_idx + data_idx]
                 if all_dev:
                     is_train = False
@@ -412,6 +421,7 @@ class Data:
                 c['img_feat'][idx] = i
                 c['uni'][idx] = v
                 c['w_uni'][idx] = w
+                c['char'][idx] = ch
                 c['brand'][idx] = b
                 c['maker'][idx] = m
                 c['price'][idx] = p
@@ -443,6 +453,7 @@ class Data:
             ds['img_feat'].resize((size, 2048))
             ds['uni'].resize(shape)
             ds['w_uni'].resize(shape)
+            ds['char'].resize((size, opt.max_len_c))
             ds['cate'].resize((size, len(self.y_vocab)))
             ds['brand'].resize((size, opt.max_len_b))
             ds['maker'].resize((size, opt.max_len_m))
