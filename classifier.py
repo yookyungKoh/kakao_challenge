@@ -28,7 +28,7 @@ from keras.callbacks import ModelCheckpoint
 from six.moves import zip, cPickle
 
 from misc import get_logger, Option
-from network import TextOnly, top1_acc
+from network import TextSelfAttentionImg, TextOnly, top1_acc
 
 opt = Option('./config.json')
 if six.PY2:
@@ -56,7 +56,7 @@ class Classifier():
         left, limit = 0, ds['uni'].shape[0]
         while True:
             right = min(left + batch_size, limit)
-            X = [ds[t][left:right, :] for t in ['uni', 'w_uni', 'img_feat']]
+            X = [ds[t][left:right, :] for t in ['uni', 'img_feat']]
             Y = ds['cate'][left:right]
             yield X, Y
             left = right
@@ -155,9 +155,9 @@ class Classifier():
         self.logger.info('# of dev samples: %s' % dev['cate'].shape[0])
 
         checkpoint = ModelCheckpoint(self.weight_fname, monitor='val_loss',
-                                     save_best_only=True, mode='min', period=10)
+                                     save_best_only=True, mode='min', period=10, save_weights_only=True)
 
-        textonly = TextOnly()
+        textonly = TextSelfAttentionImg()
         model = textonly.get_model(self.num_classes)
 
         total_train_samples = train['uni'].shape[0]
