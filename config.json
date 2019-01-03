@@ -20,7 +20,10 @@
     "unigram_hash_size": 200000,
     "min_word_length": 1,
     "max_word_length": 35,
-    "max_len": 80,
+    "max_len": 50,
+    "max_len_b": 5,
+    "max_len_m": 5,
+    "max_len_c": 200,
     "chunk_size": 20000,
     "db_chunk_size": 100000,
     "num_workers": 12,
@@ -28,5 +31,5 @@
     "embd_size": 128,
     "lr": 1e-4,
     "num_epochs": 100,
-    "batch_size": 1024
+    "batch_size": 4096
 }
