@@ -18,7 +18,7 @@ import keras
 import keras.backend as K
 from keras.models import Model
 from keras.layers.merge import dot
-from keras.layers import Dense, Input, Activation, Lambda, concatenate
+from keras.layers import Dense, Input, Activation, Lambda, concatenate, RepeatVector, multiply, Conv1D, MaxPooling1D
 from keras.layers.core import Reshape
 
 from keras.layers.embeddings import Embedding
@@ -38,40 +38,105 @@ class TextOnly:
 
     def get_model(self, num_classes, activation='sigmoid'):
         max_len = opt.max_len
+        max_len_b = opt.max_len_b # 5
+        max_len_m = opt.max_len_m # 5
+        max_len_c = opt.max_len_c # 200
         voca_size = opt.unigram_hash_size + 1
 
+        kernel_size = [1, 3, 5, 7]
+        num_kernels = [50, 50, 50, 50]
+        kernel_params = list(zip(kernel_size, num_kernels))
+
         with tf.device('/gpu:0'):
-            embd = Embedding(voca_size,
-                             opt.embd_size,
-                             name='text_embd')
+            embd = Embedding(voca_size, opt.embd_size, name='word_embd')
             
-            text = Input((max_len,), name="text")
-            text_embed = embd(text)  # (L, 128)
-            t_input = K.permute_dimensions(text_embed, (0,2,1)) #(128, L)
+            word = Input((max_len,), name="word")
+            word_embed = embd(word)  # (L, 128)
+            char = Input((max_len_c,), name="char")
+            char_embed = embd(char) #(200, 128)
+            brand = Input((max_len_b,), name="brand")
+            brand_embed = embd(brand) #(5, 128)
+#            maker = Input((max_len_m,), name="maker")
+#            price = Input((1,), name="price")
             img = Input((2048,), name="image")
-            img_feat = Reshape((2048, 1))(img)  # img feature (2048,1)
 
-            alpha_b = Dense(1, activation='softmax')(text_embed) #(L, 1)
-            alpha_b = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))(alpha_b)
-            context_b = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1,2]))([text_embed, alpha_b])
+            permute_layer = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))
+            dot_product = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1,2]))
+            softmax = Activation('softmax')
+            residual = Lambda(lambda x: x[0]+x[1])
+            squeeze = Lambda(lambda x: K.squeeze(x, axis=2))
             
-            alpha_m = Dense(1, activation='softmax')(text_embed)
-            alpha_m = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))(alpha_m)
-            context_m = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1,2]))([text_embed, alpha_m])
+            # CNN
+            conv_outputs = []
+            for kernel_size, num_kernel in kernel_params:
+                conv_output = Conv1D(num_kernel, kernel_size, padding='valid', activation='relu')(char_embed) #(N, L, 50)
+                conv_output = MaxPooling1D(pool_size=4)(conv_output)
+                conv_output = Lambda(lambda x: x[:,:48,:], output_shape=(48,50))(conv_output)
+                conv_outputs.append(conv_output)
+            char_out = concatenate(conv_outputs, axis=2) #(N, 48, 200)
+            
+            e_char = Dense(1, activation='tanh')(char_out) #(N, 48, 1)
+            alpha_char = softmax(e_char)
+            alpha_char = permute_layer(alpha_char)
+            char_attn = dot_product([char_out, alpha_char]) #(N, 200)
 
-            alpha_s = Dense(1, activation='softmax')(text_embed)
-            alpha_s = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))(alpha_s)
-            context_s = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1,2]))([text_embed, alpha_s])
+            e_word = Dense(1, activation='tanh')(word_embed) #(N, 50, 1)
+            alpha_word = softmax(e_word)
+            alpha_word = permute_layer(alpha_word)
+            word_attn = dot_product([word_embed, alpha_word]) #(N, 128)
+            
+            e_brand = Dense(1, activation='tanh')(brand_embed) #(N, 5, 1)
+            alpha_brand = softmax(e_brand)
+            alpha_brand = permute_layer(alpha_brand)
+            brand_attn = dot_product([brand_embed, alpha_brand]) #(N, 128)
+    
+            h_word = Dense(1)(squeeze(word_attn))
+            h_char = Dense(1)(squeeze(char_attn))
+            h_brand = Dense(1)(squeeze(brand_attn))
+            h_img = Dense(1)(img)
 
-            alpha_d = Dense(1, activation='softmax')(text_embed)
-            alpha_d = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))(alpha_d)
-            context_d = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1,2]))([text_embed, alpha_d])
+            h_w = concatenate([h_word, h_char, h_brand, h_img], axis=1) #(N, 4)
+            h_w = softmax(h_w)
+            
+            # allocate weights
+            h_w_word = Lambda(lambda x: x[:,0], output_shape=(1,))(h_w)
+            h_w_char = Lambda(lambda x: x[:,1], output_shape=(1,))(h_w)
+            h_w_brand = Lambda(lambda x: x[:,2], output_shape=(1,))(h_w)
+            h_w_img = Lambda(lambda x: x[:,3], output_shape=(1,))(h_w)
+            
+            h_w_word = Reshape((1,))(h_w_word)
+            h_w_char = Reshape((1,))(h_w_char)
+            h_w_brand = Reshape((1,))(h_w_brand)
+            h_w_img = Reshape((1,))(h_w_img)
 
-            h1 = concatenate([context_b, context_m, context_s, context_d, img_feat], axis=1)
-            h1 = Reshape((2560,))(h1)
-            outputs = Dense(num_classes, activation=activation)(h1) 
+            h_w_word = RepeatVector(128)(h_w_word)
+            h_w_char = RepeatVector(200)(h_w_char)
+            h_w_brand = RepeatVector(128)(h_w_brand)
+            h_w_img = RepeatVector(2048)(h_w_img)
 
-            model = Model(inputs=[text, img], outputs=outputs)
+            h_w_word = Reshape((128,))(h_w_word)
+            h_w_char = Reshape((200,))(h_w_char)
+            h_w_brand = Reshape((128,))(h_w_brand)
+            h_w_img = Reshape((2048,))(h_w_img)
+
+            h1_word = multiply([h_word, h_w_word])
+            h1_char = multiply([h_char, h_w_char])
+            h1_brand = multiply([h_brand, h_w_brand])
+            h1_img = multiply([img, h_w_img])
+
+            concat_size = 128+200+128+2048
+            h1 = concatenate([h1_word, h1_char, h1_brand, h1_img], axis=1) #(N, 2504)
+            h1 = Reshape((concat_size,))(h1)
+            h1 = Dropout(0.5)(h1)
+            h2 = Dense(concat_size, activation='relu')(h1)
+            h2 = Dropout(0.5)(h2)
+            res1 = residual([h2, h1])
+            h3 = Dense(concat_size, activation='relu')(res1)
+            h3 = Dropout(0.5)(h3)
+            res2 = residual([h3, h1])
+            outputs = Dense(num_classes, activation=activation)(res2)
+
+            model = Model(inputs=[word, char, brand, img], outputs=outputs)
             optm = keras.optimizers.Adam(opt.lr)
             model.compile(loss='binary_crossentropy',
                         optimizer=optm,
