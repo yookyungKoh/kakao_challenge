@@ -56,7 +56,7 @@ class Classifier():
         left, limit = 0, ds['uni'].shape[0]
         while True:
             right = min(left + batch_size, limit)
-            X = [ds[t][left:right, :] for t in ['uni', 'w_uni']]
+            X = [ds[t][left:right, :] for t in ['uni', 'w_uni', 'img_feat']]
             Y = ds['cate'][left:right]
             yield X, Y
             left = right
