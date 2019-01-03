@@ -1,6 +1,9 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 import os
+import shutil
+
+import fire
 import h5py
 import pickle
 import numpy as np
@@ -86,15 +89,22 @@ class KakaoDataset(Dataset):
 
         return text, freq, bcate, mcate, scate, dcate, img
 
+def split_h5py(path, out_path, div='dev', train_size=1400000, dev_size=200000):
+    if not os.path.isdir(out_path):
+        os.mkdir(out_path)
+    data_path = os.path.join(path, 'data.h5py')
+    meta_path = os.path.join(path, 'meta')
+    shutil.copy(meta_path, out_path)
+    data = h5py.File(data_path, 'r')[div]
+    out_path = os.path.join(out_path, 'data.h5py')
+    out_data = h5py.File(out_path)
+    train = out_data.create_group('train')
+    dev = out_data.create_group('dev')
+    for k in list(data.keys()):
+        train[k] = data[k][:train_size]
+        dev[k] = data[k][train_size:train_size+dev_size]
+        
+        
 
-class KakaoDataFast(Dataset):
-    def __init__(self, text, img, label):
-        self.text = text
-        self.img = img
-        self.label = label
-
-    def __len__(self):
-        return len(self.text)
-
-    def __getitem__(self, idx):
-        return self.text[idx], self.img[idx], self.label[idx]
+if __name__ == '__main__':
+    fire.Fire({'split': split_h5py})

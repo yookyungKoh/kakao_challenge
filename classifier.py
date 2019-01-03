@@ -43,11 +43,20 @@ class Classifier():
         self.logger = get_logger('Classifier')
         self.num_classes = 0
 
+    @staticmethod
+    def data_cache(data):
+        ds_cache = dict()
+        for div in ['train', 'dev']:
+            ds_cache.setdefault(div, dict())
+            for key in data[div].keys():
+                ds_cache[div].setdefault(key, data[div][key][:])
+        return ds_cache
+
     def get_sample_generator(self, ds, batch_size, raise_stop_event=False):
         left, limit = 0, ds['uni'].shape[0]
         while True:
             right = min(left + batch_size, limit)
-            X = [ds[t][left:right, :] for t in ['uni', 'char', 'brand','img_feat']]
+            X = [ds[t][left:right, :] for t in ['uni', 'w_uni']]
             Y = ds['cate'][left:right]
             yield X, Y
             left = right
@@ -124,10 +133,12 @@ class Classifier():
                 pbar.update(X[0].shape[0])
         self.write_prediction_result(test, pred_y, meta, out_path, readable=readable)
 
-    def train(self, data_root, out_dir):
+    def train(self, data_root, out_dir, use_cache=False):
         data_path = os.path.join(data_root, 'data.h5py')
         meta_path = os.path.join(data_root, 'meta')
         data = h5py.File(data_path, 'r')
+        if use_cache:
+            data = self.data_cache(data)
         meta = cPickle.loads(open(meta_path, 'rb').read())
         self.weight_fname = os.path.join(out_dir, 'weights')
         self.model_fname = os.path.join(out_dir, 'model')
