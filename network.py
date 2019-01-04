@@ -65,16 +65,32 @@ class TextOnly:
             # word end
 
             # ngram
+            num_q = 4
             ngram_embd = embd(ngram_input)  # (batch_size, max_len_c, 128)
-            e_ngram = Dense(100, use_bias=False)(ngram_embd)  # (batch_size, max_len_c, 100)
+            e_ngram = Dense(100*num_q, use_bias=False)(ngram_embd)  # (batch_size, max_len_c, 100*num_q)
+            def reshape_e_ngram(x):
+                s = tf.shape(x)   # (batch_size, max_len_c, 100*num_q)
+                x = tf.reshape(x, [s[0], s[1], 100, num_q])  #  (batch_size, max_len_c, 100, num_q)
+                x = tf.transpose(x, [3, 0, 1, 2])
+                x = tf.reshape(x, [-1, s[1], 100])  # (num_q * batch_size, max_len_c, 100)
+                return x
+            e_ngram = Lambda(reshape_e_ngram, name="reshape_e_ngram")(e_ngram)  # (num_q * batch_size, max_len_c, 100)
             # e_ngram = Lambda(lambda x: x / np.sqrt(x), name="scale_dot")(e_ngram)
-            attn_ngram = Softmax(axis=1)(e_ngram)  # (batch_size, max_len_c, 100)
-            avg_attn_ngram = Lambda(lambda x: K.mean(x, axis=2), name="e_ngram_mean")(attn_ngram)  # (batch_size, max_len_c)
-            context_ngram = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1, 1]), name='ngram_context')([ngram_embd, avg_attn_ngram])  # (batch_size, 128)
+            attn_ngram = Softmax(axis=1)(e_ngram)  # (num_q * batch_size, max_len_c, 100)
+            avg_attn_ngram = Lambda(lambda x: K.mean(x, axis=2), name="e_ngram_mean")(attn_ngram)  # (num_q * batch_size, max_len_c)
+            def reshape_e_ngram2(x):
+                s = tf.shape(x)   # (num_q * batch_size, max_len_c)
+                x = tf.reshape(x, [num_q, -1, s[1]])  #  (num_q, batch_size, max_len_c)
+                x = tf.transpose(x, [1, 2, 0])
+                x = tf.reshape(x, [-1, s[1], num_q])  # (batch_size, max_len_c, num_q)
+                return x
+            avg_attn_ngram = Lambda(reshape_e_ngram2, name="reshape_e_ngram2")(avg_attn_ngram)  # (batch_size, max_len_c, num_q)
+            context_ngram = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1, 1]), name='ngram_context')([ngram_embd, avg_attn_ngram])  # (batch_size, 128, num_q)
+            context_ngram = Flatten(name="context_flatten")(context_ngram)
             context_ngram = Dropout(rate=0.5, name="context_ngram_dropout")(context_ngram)
             context_ngram = Activation('relu', name="context_ngram_relu")(context_ngram)
             # ngram_end
-            
+
             concat = Concatenate()([context_ngram, img_dropout, word_relu])
             pred = Dense(num_classes, activation='softmax', name="pred")(concat)
 
@@ -119,7 +135,7 @@ class CharCNN():
             word_embd = embd(word_input)  # (batch_size, word_max_len, 128)
             char_embd = embd(char_input)  # (batch_size, char_max_len, 128)
 
-            Conv1D()
+            # Conv1D()
 
 class TextSelfAttentionImg:
     def __init__(self):
