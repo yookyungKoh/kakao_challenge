@@ -56,7 +56,7 @@ class Classifier():
         left, limit = 0, ds['uni'].shape[0]
         while True:
             right = min(left + batch_size, limit)
-            X = [ds[t][left:right, :] for t in ['uni', 'img_feat']]
+            X = [ds[t][left:right, :] for t in ['uni', 'char', 'brand','img_feat']]
             Y = ds['cate'][left:right]
             yield X, Y
             left = right
@@ -155,9 +155,9 @@ class Classifier():
         self.logger.info('# of dev samples: %s' % dev['cate'].shape[0])
 
         checkpoint = ModelCheckpoint(self.weight_fname, monitor='val_loss',
-                                     save_best_only=True, mode='min', period=10, save_weights_only=True)
+                                     save_best_only=True, mode='min', period=10)
 
-        textonly = TextSelfAttentionImg()
+        textonly = TextOnly()
         model = textonly.get_model(self.num_classes)
 
         total_train_samples = train['uni'].shape[0]
