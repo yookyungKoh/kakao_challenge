@@ -38,112 +38,52 @@ class TextOnly:
         self.logger = get_logger('textonly')
 
     def get_model(self, num_classes, activation='sigmoid'):
-        max_len = opt.max_len
-        max_len_b = opt.max_len_b # 5
-        max_len_m = opt.max_len_m # 5
-        max_len_c = opt.max_len_c # 200
+        max_len = opt.max_len # 50
+        max_len_c = opt.max_len_c # 300
+        img_size = 2048
         voca_size = opt.unigram_hash_size + 1
 
-        kernel_size = [1, 3, 5, 7]
-        num_kernels = [50, 50, 50, 50]
-        kernel_params = list(zip(kernel_size, num_kernels))
-
         with tf.device('/gpu:0'):
-            embd = Embedding(voca_size, opt.embd_size, name='word_embd')
+            embd = Embedding(voca_size, opt.embd_size, name='word_embd', mask_zero=True)
             
-            word = Input((max_len,), name="word")
-            word_embed = embd(word)  # (L, 128)
-            char = Input((max_len_c,), name="char")
-            char_embed = embd(char) #(200, 128)
-            brand = Input((max_len_b,), name="brand")
-            brand_embed = embd(brand) #(5, 128)
-#            maker = Input((max_len_m,), name="maker")
-#            price = Input((1,), name="price")
-            img = Input((2048,), name="image")
+            ngram_input = Input((max_len_c,), name="input_ngram")
+            word_input = Input((max_len,), name="input_word")
+            word_count_input = Input((max_len,), name="input_word_count")
+            img_input = Input((img_size,), name="input_img")
 
-            permute_layer = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))
-            dot_product = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1,2]))
-            softmax = Activation('softmax')
-            residual = Lambda(lambda x: x[0]+x[1])
-            squeeze = Lambda(lambda x: K.squeeze(x, axis=2))
+            # image
+            img_dropout = Dropout(rate=0.5)(img_input)
+            # image end
+
+            # word
+            word_embd = embd(word_input)
+            word_count_mat = Reshape((max_len, 1))(word_count_input)  # weight
+            word_mat = dot([word_embd, word_count_mat], axes=1)
+            word = Reshape((opt.embd_size, ))(word_mat)
+            word_out = Dropout(rate=0.5)(word)
+            word_relu = Activation('relu', name='word_relu')(word_out)
+            # word end
+
+            # ngram
+            ngram_embd = embd(ngram_input)  # (batch_size, max_len_c, 128)
+            e_ngram = Dense(100, use_bias=False)(ngram_embd)  # (batch_size, max_len_c, 100)
+            # e_ngram = Lambda(lambda x: x / np.sqrt(x), name="scale_dot")(e_ngram)
+            attn_ngram = Softmax(axis=1)(e_ngram)  # (batch_size, max_len_c, 100)
+            avg_attn_ngram = Lambda(lambda x: K.mean(x, axis=2), name="e_ngram_mean")(attn_ngram)  # (batch_size, max_len_c)
+            context_ngram = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[1, 1]), name='ngram_context')([ngram_embd, avg_attn_ngram])  # (batch_size, 128)
+            context_ngram = Dropout(rate=0.5, name="context_ngram_dropout")(context_ngram)
+            context_ngram = Activation('relu', name="context_ngram_relu")(context_ngram)
+            # ngram_end
             
-            # CNN
-            conv_outputs = []
-            for kernel_size, num_kernel in kernel_params:
-                conv_output = Conv1D(num_kernel, kernel_size, padding='valid', activation='relu')(char_embed) #(N, L, 50)
-                conv_output = MaxPooling1D(pool_size=4)(conv_output)
-                conv_output = Lambda(lambda x: x[:,:48,:], output_shape=(48,50))(conv_output)
-                conv_outputs.append(conv_output)
-            char_out = concatenate(conv_outputs, axis=2) #(N, 48, 200)
-            
-            e_char = Dense(1, activation='tanh')(char_out) #(N, 48, 1)
-            alpha_char = softmax(e_char)
-            alpha_char = permute_layer(alpha_char)
-            char_attn = dot_product([char_out, alpha_char]) #(N, 200)
+            concat = Concatenate()([context_ngram, img_dropout, word_relu])
+            pred = Dense(num_classes, activation='softmax', name="pred")(concat)
 
-            e_word = Dense(1, activation='tanh')(word_embed) #(N, 50, 1)
-            alpha_word = softmax(e_word)
-            alpha_word = permute_layer(alpha_word)
-            word_attn = dot_product([word_embed, alpha_word]) #(N, 128)
-            
-            e_brand = Dense(1, activation='tanh')(brand_embed) #(N, 5, 1)
-            alpha_brand = softmax(e_brand)
-            alpha_brand = permute_layer(alpha_brand)
-            brand_attn = dot_product([brand_embed, alpha_brand]) #(N, 128)
-    
-            h_word = Dense(1)(squeeze(word_attn))
-            h_char = Dense(1)(squeeze(char_attn))
-            h_brand = Dense(1)(squeeze(brand_attn))
-            h_img = Dense(1)(img)
-
-            h_w = concatenate([h_word, h_char, h_brand, h_img], axis=1) #(N, 4)
-            h_w = softmax(h_w)
-            
-            # allocate weights
-            h_w_word = Lambda(lambda x: x[:,0], output_shape=(1,))(h_w)
-            h_w_char = Lambda(lambda x: x[:,1], output_shape=(1,))(h_w)
-            h_w_brand = Lambda(lambda x: x[:,2], output_shape=(1,))(h_w)
-            h_w_img = Lambda(lambda x: x[:,3], output_shape=(1,))(h_w)
-            
-            h_w_word = Reshape((1,))(h_w_word)
-            h_w_char = Reshape((1,))(h_w_char)
-            h_w_brand = Reshape((1,))(h_w_brand)
-            h_w_img = Reshape((1,))(h_w_img)
-
-            h_w_word = RepeatVector(128)(h_w_word)
-            h_w_char = RepeatVector(200)(h_w_char)
-            h_w_brand = RepeatVector(128)(h_w_brand)
-            h_w_img = RepeatVector(2048)(h_w_img)
-
-            h_w_word = Reshape((128,))(h_w_word)
-            h_w_char = Reshape((200,))(h_w_char)
-            h_w_brand = Reshape((128,))(h_w_brand)
-            h_w_img = Reshape((2048,))(h_w_img)
-
-            h1_word = multiply([h_word, h_w_word])
-            h1_char = multiply([h_char, h_w_char])
-            h1_brand = multiply([h_brand, h_w_brand])
-            h1_img = multiply([img, h_w_img])
-
-            concat_size = 128+200+128+2048
-            h1 = concatenate([h1_word, h1_char, h1_brand, h1_img], axis=1) #(N, 2504)
-            h1 = Reshape((concat_size,))(h1)
-            h1 = Dropout(0.5)(h1)
-            h2 = Dense(concat_size, activation='relu')(h1)
-            h2 = Dropout(0.5)(h2)
-            res1 = residual([h2, h1])
-            h3 = Dense(concat_size, activation='relu')(res1)
-            h3 = Dropout(0.5)(h3)
-            res2 = residual([h3, h1])
-            outputs = Dense(num_classes, activation=activation)(res2)
-
-            model = Model(inputs=[word, char, brand, img], outputs=outputs)
-            optm = keras.optimizers.Adam(opt.lr)
-            model.compile(loss='binary_crossentropy',
-                        optimizer=optm,
-                        metrics=[top1_acc])
+            model = Model(inputs=[ngram_input, word_input, word_count_input, img_input], outputs=pred)
+            optm = keras.optimizers.Nadam(opt.lr)
+            model.compile(loss='categorical_crossentropy',
+                          optimizer=optm,
+                          metrics=[top1_acc])
             model.summary(print_fn=lambda x: self.logger.info(x))
-
         return model
 
 class TextImgFusion():
@@ -169,11 +109,17 @@ class CharCNN():
         voca_size = opt.unigram_hash_size + 1
         img_size = 2048
 
-        word_input = Input((word_max_len,), name="input_word")
-        word_count_input = Input((word_max_len,), name="input_word_count")
-        img_input = Input((img_size,), name="input_img")
-        char_input = Input((char_max_len,), name='imput_char')
-        
+        with tf.device('/gpu:0'):
+            word_input = Input((word_max_len,), name="input_word")
+            word_count_input = Input((word_max_len,), name="input_word_count")
+            char_input = Input((char_max_len,), name='imput_char')
+            img_input = Input((img_size,), name="input_img")
+
+            embd = Embedding(voca_size, opt.embd_size, name='word_embd', mask_zero=True)
+            word_embd = embd(word_input)  # (batch_size, word_max_len, 128)
+            char_embd = embd(char_input)  # (batch_size, char_max_len, 128)
+
+            Conv1D()
 
 class TextSelfAttentionImg:
     def __init__(self):

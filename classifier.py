@@ -56,7 +56,7 @@ class Classifier():
         left, limit = 0, ds['uni'].shape[0]
         while True:
             right = min(left + batch_size, limit)
-            X = [ds[t][left:right, :] for t in ['uni', 'char', 'brand','img_feat']]
+            X = [ds[t][left:right, :] for t in ['char', 'uni', 'w_uni', 'img_feat']]
             Y = ds['cate'][left:right]
             yield X, Y
             left = right
@@ -133,7 +133,7 @@ class Classifier():
                 pbar.update(X[0].shape[0])
         self.write_prediction_result(test, pred_y, meta, out_path, readable=readable)
 
-    def train(self, data_root, out_dir, use_cache=False):
+    def train(self, data_root, out_dir, use_cache=False, restart=False):
         data_path = os.path.join(data_root, 'data.h5py')
         meta_path = os.path.join(data_root, 'meta')
         data = h5py.File(data_path, 'r')
@@ -159,7 +159,9 @@ class Classifier():
 
         textonly = TextOnly()
         model = textonly.get_model(self.num_classes)
-
+        if restart:
+            model = load_model(self.model_fname + '.h5',
+                               custom_objects={'top1_acc': top1_acc})
         total_train_samples = train['uni'].shape[0]
         train_gen = self.get_sample_generator(train,
                                               batch_size=opt.batch_size)
