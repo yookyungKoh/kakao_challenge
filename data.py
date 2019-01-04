@@ -233,8 +233,12 @@ class Data:
         brand_words = [w.strip() for w in brand]
         maker_words = [w.strip() for w in maker]
         words = [w.strip() for w in product]
-        chars = ' '.join(words)
-        chars = [c for c in chars]
+        chars = ''.join(words)
+        char_ngrams = []
+        for n in range(1,6):
+            char_ngram = [chars[i:i+n] for i in range(len(chars)-n+1)]
+            char_ngrams += char_ngram
+        # chars = [c for c in chars]
         words = [w for w in words
                  if len(w) >= opt.min_word_length and len(w) < opt.max_word_length]
         brand_words = [w for w in brand_words if len(w)>=1 and len(w) < 15]
@@ -247,7 +251,7 @@ class Data:
 
         hash_func = hash if six.PY2 else lambda x: mmh3.hash(x, seed=17)
         x = [hash_func(w) % opt.unigram_hash_size + 1 for w in words]
-        ch = [hash_func(c) % opt.unigram_hash_size + 1 for c in chars]
+        ch = [hash_func(c) % opt.unigram_hash_size + 1 for c in char_ngrams]
         xv = Counter(x).most_common(opt.max_len)
         br = [hash_func(w) % opt.unigram_hash_size + 1 for w in brand_words]
         mk = [hash_func(w) % opt.unigram_hash_size + 1 for w in maker_words]
