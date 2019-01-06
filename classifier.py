@@ -28,14 +28,14 @@ from keras.callbacks import ModelCheckpoint
 from six.moves import zip, cPickle
 
 from misc import get_logger, Option
-from network import TextSelfAttentionImg, TextOnly, top1_acc
+from network import TextOnly, top1_acc
 
 opt = Option('./config.json')
 if six.PY2:
     cate1 = json.loads(open('../cate1.json').read())
 else:
     cate1 = json.loads(open('../cate1.json', 'rb').read().decode('utf-8'))
-DEV_DATA_LIST = ['../dev.chunk.01']
+DEV_DATA_LIST = ['/hdd1/kakao/dev.chunk.01']
 
 
 class Classifier():
@@ -44,26 +44,45 @@ class Classifier():
         self.num_classes = 0
 
     @staticmethod
-    def data_cache(data):
+    def data_cache(data, cache_size=3000000):
         ds_cache = dict()
-        for div in ['train', 'dev']:
-            ds_cache.setdefault(div, dict())
-            for key in data[div].keys():
-                ds_cache[div].setdefault(key, data[div][key][:])
+        # for div in ['train', 'dev']:
+        #     ds_cache.setdefault(div, dict())
+        for key in data.keys():
+            ds_cache.setdefault(key, data[key][:cache_size])
         return ds_cache
 
-    def get_sample_generator(self, ds, batch_size, raise_stop_event=False):
+    def get_sample_generator(self, ds, ds_cache, cache_size, use_cache, batch_size, raise_stop_event=False):
         left, limit = 0, ds['uni'].shape[0]
-        while True:
-            right = min(left + batch_size, limit)
-            X = [ds[t][left:right, :] for t in ['char', 'uni', 'w_uni', 'img_feat']]
-            Y = ds['cate'][left:right]
-            yield X, Y
-            left = right
-            if right == limit:
-                left = 0
-                if raise_stop_event:
-                    raise StopIteration
+        if use_cache:
+            while True:
+                if left < cache_size:
+                    right = min(left + batch_size, cache_size)
+                    X = [ds_cache[t][left:right, :] for t in ['uni', 'char', 'img_feat']]
+                    Y = ds_cache['cate'][left:right]
+                    yield X, Y
+                    left = right
+                else:
+                    right = min(left + batch_size, limit)
+                    X = [ds[t][left:right, :] for t in ['uni', 'char', 'img_feat']]
+                    Y = ds['cate'][left:right]
+                    yield X, Y
+                    left = right
+                    if right == limit:
+                        left = 0
+                        if raise_stop_event:
+                            raise StopIteration
+        else:
+            while True:
+                right = min(left + batch_size, limit)
+                X = [ds[t][left:right, :] for t in ['uni', 'char', 'img_feat']]
+                Y = ds['cate'][left:right]
+                yield X, Y
+                left = right
+                if right == limit:
+                    left = 0
+                    if raise_stop_event:
+                        raise StopIteration
 
     def get_inverted_cate1(self, cate1):
         inv_cate1 = {}
@@ -113,8 +132,11 @@ class Classifier():
 
         model_fname = os.path.join(model_root, 'weights')
         self.logger.info('# of classes(train): %s' % len(meta['y_vocab']))
-        model = load_model(model_fname,
-                           custom_objects={'top1_acc': top1_acc})
+        num_classes = 4215
+        model = TextOnly().get_model(num_classes)
+        model.load_weights(model_fname)
+        # model = load_model(model_fname,
+        #                    custom_objects={'top1_acc': top1_acc})
 
         test_path = os.path.join(test_root, 'data.h5py')
         test_data = h5py.File(test_path, 'r')
@@ -137,8 +159,6 @@ class Classifier():
         data_path = os.path.join(data_root, 'data.h5py')
         meta_path = os.path.join(data_root, 'meta')
         data = h5py.File(data_path, 'r')
-        if use_cache:
-            data = self.data_cache(data)
         meta = cPickle.loads(open(meta_path, 'rb').read())
         self.weight_fname = os.path.join(out_dir, 'weights')
         self.model_fname = os.path.join(out_dir, 'model')
@@ -149,26 +169,29 @@ class Classifier():
         self.num_classes = len(meta['y_vocab'])
 
         train = data['train']
+        if use_cache:
+            train_cache = self.data_cache(train)
         dev = data['dev']
 
         self.logger.info('# of train samples: %s' % train['cate'].shape[0])
         self.logger.info('# of dev samples: %s' % dev['cate'].shape[0])
 
         checkpoint = ModelCheckpoint(self.weight_fname, monitor='val_loss',
-                                     save_best_only=True, mode='min', period=10)
+                                     save_best_only=True, mode='min', period=1)
 
         textonly = TextOnly()
         model = textonly.get_model(self.num_classes)
+        model.load_weights(self.weight_fname)
         if restart:
             model = load_model(self.model_fname + '.h5',
                                custom_objects={'top1_acc': top1_acc})
         total_train_samples = train['uni'].shape[0]
-        train_gen = self.get_sample_generator(train,
+        train_gen = self.get_sample_generator(train, train_cache, 3000000, True,
                                               batch_size=opt.batch_size)
         self.steps_per_epoch = int(np.ceil(total_train_samples / float(opt.batch_size)))
 
         total_dev_samples = dev['uni'].shape[0]
-        dev_gen = self.get_sample_generator(dev,
+        dev_gen = self.get_sample_generator(dev, None, None, False,
                                             batch_size=opt.batch_size)
         self.validation_steps = int(np.ceil(total_dev_samples / float(opt.batch_size)))
 

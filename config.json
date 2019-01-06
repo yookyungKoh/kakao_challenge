@@ -26,10 +26,10 @@
     "max_len_c": 300,
     "chunk_size": 20000,
     "db_chunk_size": 100000,
-    "num_workers": 18,
-    "num_predict_workers": 6,
+    "num_workers": 12,
+    "num_predict_workers": 4,
     "embd_size": 128,
-    "lr": 1e-4,
+    "lr": 5e-5,
     "num_epochs": 100,
-    "batch_size": 4096
+    "batch_size": 1024
 }
