@@ -144,7 +144,7 @@ class Classifier():
         test = test_data[test_div]
         batch_size = opt.batch_size
         pred_y = []
-        test_gen = ThreadsafeIter(self.get_sample_generator(test, batch_size, raise_stop_event=True))
+        test_gen = ThreadsafeIter(self.get_sample_generator(test, None, None, False, batch_size, raise_stop_event=True))
         total_test_samples = test['uni'].shape[0]
         with tqdm.tqdm(total=total_test_samples) as pbar:
             for chunk in test_gen:
